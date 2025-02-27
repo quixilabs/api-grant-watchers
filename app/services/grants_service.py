@@ -1,7 +1,11 @@
 import httpx
 import json
+import logging
 from app.core.config import settings
 from app.utils.supabase import save_grants_data
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 async def fetch_grants_data(keyword="", date_range="30", opp_statuses="forecasted|posted", rows=5000, sort_by="openDate|desc"):
     """
@@ -36,16 +40,23 @@ async def fetch_grants_data(keyword="", date_range="30", opp_statuses="forecaste
         "Content-Type": "application/json"
     }
     
+    logger.info(f"Fetching grants data from {url} with payload: {payload}")
+    
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(url, json=payload, headers=headers)
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            logger.info(f"Successfully fetched grants data. Status code: {response.status_code}")
+            return data
     except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error occurred: {e}")
         return {"error": f"HTTP error occurred: {e}"}
     except httpx.RequestError as e:
+        logger.error(f"Request error occurred: {e}")
         return {"error": f"Request error occurred: {e}"}
     except Exception as e:
+        logger.error(f"An unexpected error occurred: {e}")
         return {"error": f"An unexpected error occurred: {e}"}
 
 async def fetch_and_save_grants_data(keyword="", date_range="30", opp_statuses="forecasted|posted", rows=5000, sort_by="openDate|desc", save_to_supabase=True):
@@ -64,10 +75,13 @@ async def fetch_and_save_grants_data(keyword="", date_range="30", opp_statuses="
         dict: The result of the operation
     """
     try:
+        logger.info(f"Fetching and {'saving' if save_to_supabase else 'not saving'} grants data with parameters: keyword={keyword}, date_range={date_range}, opp_statuses={opp_statuses}, rows={rows}, sort_by={sort_by}")
+        
         # Fetch data from Grants.gov API
         data = await fetch_grants_data(keyword, date_range, opp_statuses, rows, sort_by)
         
         if "error" in data:
+            logger.error(f"Error fetching data: {data['error']}")
             return data
         
         # If save_to_supabase is False, just return the data
@@ -76,6 +90,7 @@ async def fetch_and_save_grants_data(keyword="", date_range="30", opp_statuses="
             count = 0
             if isinstance(data, list) and len(data) > 0 and "hitCount" in data[0]:
                 count = data[0]["hitCount"]
+                logger.info(f"Not saving to Supabase. Found {count} opportunities.")
             
             return {
                 "success": True,
@@ -85,17 +100,21 @@ async def fetch_and_save_grants_data(keyword="", date_range="30", opp_statuses="
             }
         
         # Save data to Supabase
+        logger.info("Saving data to Supabase")
         result = save_grants_data(data)
         
         if "error" in result:
+            logger.error(f"Error saving data to Supabase: {result['error']}")
             return result
         
+        logger.info(f"Successfully saved data to Supabase. Count: {result.get('count', 0)}")
         return {
             "success": True,
             "message": f"Successfully fetched and saved {result.get('count', 0)} grants",
             "data": result
         }
     except Exception as e:
+        logger.error(f"An error occurred in fetch_and_save_grants_data: {str(e)}")
         return {
             "success": False,
             "error": f"An error occurred: {str(e)}"
