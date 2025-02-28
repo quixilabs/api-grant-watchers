@@ -69,6 +69,7 @@ CREATE TABLE grants (
     posting_date TEXT,
     estimated_funding TEXT,
     synopsis_desc TEXT,
+    synopsis_summary JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -111,6 +112,7 @@ CREATE INDEX idx_grants_search_keyword ON grants(search_keyword);
 | posting_date | Date when the opportunity was posted |
 | estimated_funding | Total estimated funding available |
 | synopsis_desc | Synopsis description of the grant opportunity |
+| synopsis_summary | AI-generated summary of the grant in structured format |
 | created_at | Timestamp when the record was created |
 
 ## Running the Application
@@ -243,10 +245,167 @@ The application uses the following environment variables:
 - `WEBHOOK_SECRET`: Secret for webhooks
 - `SUPABASE_URL`: URL of your Supabase project
 - `SUPABASE_KEY`: API key for your Supabase project
+- `OPENAI_API_KEY`: API key for OpenAI (required for grant summary generation)
+
+## Grant Summaries
+
+The application can generate concise summaries of grant opportunities using OpenAI's GPT model. These summaries provide key information about each grant in a structured format.
+
+### Summary Format
+
+Each grant summary includes:
+- `goal`: The main objective of the grant (what it aims to accomplish)
+- `duration`: The timeframe for the grant opportunity
+- `success_criteria`: Key points that make for a successful application
+- `good_to_know`: Important information applicants should be aware of
+
+### Generate Summaries for All Grants
+
+#### POST /api/v1/grants/generate-summaries
+
+This endpoint processes grants in batches, generating summaries for each grant and storing them in the database.
+
+Query Parameters:
+- `batch_size` (optional, default: 10): Number of grants to process in each batch
+- `offset` (optional, default: 0): Offset for pagination
+- `force_regenerate` (optional, default: false): Whether to regenerate summaries for grants that already have them
+
+Example:
+```
+POST /api/v1/grants/generate-summaries?batch_size=5
+```
+
+Response:
+```json
+{
+  "success": true,
+  "message": "Processed 5 grants",
+  "count": 5,
+  "next_offset": 5,
+  "processed": [
+    {
+      "grant_id": "123456",
+      "status": "success",
+      "summary": {
+        "goal": "Fund research on renewable energy technologies",
+        "duration": "12 months",
+        "success_criteria": [
+          "Clear research methodology",
+          "Demonstrated expertise in renewable energy",
+          "Potential for commercial application"
+        ],
+        "good_to_know": [
+          "Cost sharing of 20% required",
+          "Quarterly progress reports must be submitted",
+          "Prior experience with federal grants preferred"
+        ]
+      }
+    },
+    // Additional processed grants...
+  ]
+}
+```
+
+### Generate Summary for a Single Grant
+
+#### POST /api/v1/grants/generate-summary/{grant_id}
+
+This endpoint generates a summary for a specific grant and stores it in the database.
+
+Path Parameters:
+- `grant_id`: The ID of the grant to generate a summary for
+
+Query Parameters:
+- `force_regenerate` (optional, default: false): Whether to regenerate the summary if it already exists
+
+Example:
+```
+POST /api/v1/grants/generate-summary/123456
+```
+
+Response:
+```json
+{
+  "success": true,
+  "message": "Successfully generated summary",
+  "grant_id": "123456",
+  "summary": {
+    "goal": "Fund research on renewable energy technologies",
+    "duration": "12 months",
+    "success_criteria": [
+      "Clear research methodology",
+      "Demonstrated expertise in renewable energy",
+      "Potential for commercial application"
+    ],
+    "good_to_know": [
+      "Cost sharing of 20% required",
+      "Quarterly progress reports must be submitted",
+      "Prior experience with federal grants preferred"
+    ]
+  }
+}
+```
 
 ## Documentation
 
 API documentation is available at http://localhost:8000/docs when the application is running.
+
+## How to Run the Grant Summary Generation
+
+Before running the grant summary generation, make sure you have:
+
+1. Set up your OpenAI API key in the `.env` file:
+   ```
+   OPENAI_API_KEY=your_openai_api_key_here
+   ```
+
+2. Applied the database migration to add the `synopsis_summary` column:
+   ```
+   python apply_migrations.py
+   ```
+
+3. Started the FastAPI application:
+   ```
+   python run.py
+   ```
+
+### Generate Summaries for All Grants
+
+To generate summaries for all grants in the database, you can use the following curl command:
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/grants/generate-summaries?batch_size=5" -H "accept: application/json"
+```
+
+This will process grants in batches of 5. You can adjust the batch size as needed.
+
+To process the next batch, use the `next_offset` value from the previous response:
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/grants/generate-summaries?batch_size=5&offset=5" -H "accept: application/json"
+```
+
+### Generate Summary for a Specific Grant
+
+To generate a summary for a specific grant, use the following curl command:
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/grants/generate-summary/123456" -H "accept: application/json"
+```
+
+Replace `123456` with the actual grant ID you want to generate a summary for.
+
+### Using the FastAPI Swagger UI
+
+You can also use the FastAPI Swagger UI to test these endpoints:
+
+1. Open your browser and navigate to http://localhost:8000/docs
+2. Find the `/api/v1/grants/generate-summaries` or `/api/v1/grants/generate-summary/{grant_id}` endpoint
+3. Click on "Try it out"
+4. Fill in the parameters as needed
+5. Click "Execute"
+
+The response will show the generated summaries and other relevant information.
 
 ## Scheduled Tasks
 

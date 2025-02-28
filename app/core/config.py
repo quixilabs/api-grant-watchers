@@ -38,6 +38,7 @@ else:
 # Log the loaded environment variables (without sensitive values)
 logger.info(f"Loaded SUPABASE_URL: {'[SET]' if os.environ.get('SUPABASE_URL') else '[NOT SET]'}")
 logger.info(f"Loaded SUPABASE_KEY: {'[SET]' if os.environ.get('SUPABASE_KEY') else '[NOT SET]'}")
+logger.info(f"Loaded OPENAI_API_KEY: {'[SET]' if os.environ.get('OPENAI_API_KEY') else '[NOT SET]'}")
 logger.info(f"SUPABASE_URL value: {os.environ.get('SUPABASE_URL', '')}")
 logger.info(f"SUPABASE_KEY value (first 10 chars): {os.environ.get('SUPABASE_KEY', '')[:10] if os.environ.get('SUPABASE_KEY') else 'None'}")
 
@@ -47,6 +48,7 @@ class Settings(BaseSettings):
     WEBHOOK_SECRET: str = os.environ.get("WEBHOOK_SECRET", "default_webhook_secret")
     SUPABASE_URL: str = os.environ.get("SUPABASE_URL", "")
     SUPABASE_KEY: str = os.environ.get("SUPABASE_KEY", "")
+    OPENAI_API_KEY: str = os.environ.get("OPENAI_API_KEY", "")
     GRANTS_API_URL: str = "https://apply07.grants.gov/grantsws/rest/opportunities/search"
     
     # Project name
@@ -59,3 +61,4 @@ class Settings(BaseSettings):
 settings = Settings()
 logger.info(f"Settings initialized with SUPABASE_URL: {settings.SUPABASE_URL}")
 logger.info(f"Settings initialized with SUPABASE_KEY: {'[SET]' if settings.SUPABASE_KEY else '[NOT SET]'}")
+logger.info(f"Settings initialized with OPENAI_API_KEY: {'[SET]' if settings.OPENAI_API_KEY else '[NOT SET]'}")
