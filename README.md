@@ -12,6 +12,7 @@ A FastAPI application that fetches data from the Grants.gov API and stores it in
 - Keyword tracking to associate grants with search terms
 - Automated checking for new grants based on saved keywords
 - Statistics on grants found per keyword
+- Detailed grant information fetched from the Grants.gov details API
 
 ## Setup
 
@@ -50,12 +51,67 @@ CREATE TABLE grants (
     raw_data JSONB,
     search_params JSONB,
     search_keyword TEXT,
+    description TEXT,
+    category_explanation TEXT,
+    award_ceiling TEXT,
+    award_floor TEXT,
+    expected_awards TEXT,
+    funding_instrument_type TEXT,
+    eligibility_categories TEXT[],
+    cost_sharing TEXT,
+    additional_information JSONB,
+    agency_contacts JSONB,
+    details_raw_data JSONB,
+    applicant_eligibility_desc TEXT,
+    funding_activity_categories TEXT[],
+    opportunity_category TEXT,
+    response_date TEXT,
+    posting_date TEXT,
+    estimated_funding TEXT,
+    synopsis_desc TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Add an index on search_keyword for faster searches
 CREATE INDEX idx_grants_search_keyword ON grants(search_keyword);
 ```
+
+### Grants Table Column Descriptions
+
+| Column | Description |
+|--------|-------------|
+| id | Primary key - unique identifier for the grant |
+| number | Grant opportunity number |
+| title | Title of the grant opportunity |
+| agency_code | Code of the agency offering the grant |
+| agency | Name of the agency offering the grant |
+| open_date | Date when the grant opportunity opens |
+| close_date | Date when the grant opportunity closes |
+| status | Current status of the grant opportunity |
+| doc_type | Document type |
+| cfda_list | List of CFDA (Catalog of Federal Domestic Assistance) numbers |
+| raw_data | Raw JSON data from the search API |
+| search_params | Parameters used to search for this grant |
+| search_keyword | Keyword used to find this grant |
+| description | Detailed description of the grant opportunity |
+| category_explanation | Explanation of the grant category |
+| award_ceiling | Maximum award amount |
+| award_floor | Minimum award amount |
+| expected_awards | Expected number of awards |
+| funding_instrument_type | Type of funding instrument (e.g., Grant, Cooperative Agreement) |
+| eligibility_categories | Categories of eligible applicants |
+| cost_sharing | Cost sharing or matching requirements |
+| additional_information | Additional information about the grant |
+| agency_contacts | Contact information for the agency |
+| details_raw_data | Raw data from the details API response |
+| applicant_eligibility_desc | Detailed description of who is eligible to apply for the grant |
+| funding_activity_categories | Categories of funding activities |
+| opportunity_category | Category of the opportunity (e.g., Discretionary) |
+| response_date | Due date for applications |
+| posting_date | Date when the opportunity was posted |
+| estimated_funding | Total estimated funding available |
+| synopsis_desc | Synopsis description of the grant opportunity |
+| created_at | Timestamp when the record was created |
 
 ## Running the Application
 
@@ -116,7 +172,7 @@ Response: Same as GET endpoint
 
 #### POST /api/v1/keywords/check-new-grants
 
-This endpoint checks for new grants for all keywords stored in the database. It runs as a background task and updates each keyword's execution date after processing.
+This endpoint checks for new grants for all keywords stored in the database. It runs as a background task and updates each keyword's execution date after processing. For each new grant found, it also fetches detailed information from the Grants.gov details API.
 
 Query Parameters:
 - `date_range` (optional, default: "1"): Number of days to look back for new grants
@@ -222,3 +278,5 @@ When grants are saved to Supabase:
 1. The system checks for duplicates to avoid storing the same grant multiple times
 2. Each grant is associated with the search keyword that was used to find it
 3. Both the raw data and search parameters are stored for reference
+4. For each new grant, detailed information is fetched from the Grants.gov details API
+5. The detailed information includes award amounts, eligibility criteria, and contact information

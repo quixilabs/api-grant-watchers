@@ -36,8 +36,8 @@ async def check_new_grants():
         logger.info("Starting scheduled task: check_new_grants")
         
         # Import here to avoid circular imports
-        from app.utils.supabase import get_supabase_client
-        from app.services.grants_service import fetch_and_save_grants_data
+        from app.utils.supabase import get_supabase_client, update_grant_details
+        from app.services.grants_service import fetch_and_save_grants_data, fetch_grant_details
         
         # Get Supabase client
         client = get_supabase_client()
@@ -58,6 +58,7 @@ async def check_new_grants():
             "keywords_processed": 0,
             "total_grants_found": 0,
             "total_grants_saved": 0,
+            "total_details_fetched": 0,
             "errors": []
         }
         
@@ -98,6 +99,58 @@ async def check_new_grants():
                     
                     results["total_grants_found"] += total_found
                     results["total_grants_saved"] += grants_count
+                    
+                    # If we saved any grants, fetch details for each one
+                    if grants_count > 0:
+                        # Get the IDs of the grants we just saved
+                        saved_grants = []
+                        if "results" in result.get("data", {}):
+                            # Extract grant IDs from the results
+                            for grant_result in result["data"]["results"]:
+                                if grant_result.data and len(grant_result.data) > 0:
+                                    for grant in grant_result.data:
+                                        saved_grants.append(grant.get("id"))
+                        
+                        # If we couldn't extract IDs from results, query the database
+                        if not saved_grants:
+                            # Query grants with this keyword that were recently added
+                            # Use LIKE operator to match grants where the keyword is part of a comma-separated list
+                            grants_query = client.table("grants").select("id").like("search_keyword", f"%{keyword_value}%").order("created_at", desc=True).limit(grants_count).execute()
+                            if grants_query.data:
+                                saved_grants = [grant.get("id") for grant in grants_query.data]
+                        
+                        logger.info(f"Fetching details for {len(saved_grants)} grants")
+                        
+                        # Fetch details for each grant
+                        details_fetched = 0
+                        for grant_id in saved_grants:
+                            try:
+                                # Check if we already have details for this grant
+                                has_details = client.table("grants").select("details_raw_data").eq("id", grant_id).execute()
+                                if has_details.data and len(has_details.data) > 0 and has_details.data[0].get("details_raw_data"):
+                                    logger.info(f"Grant {grant_id} already has details, skipping")
+                                    continue
+                                
+                                # Fetch details from Grants.gov API
+                                details = await fetch_grant_details(grant_id)
+                                
+                                if "error" in details:
+                                    logger.error(f"Error fetching details for grant {grant_id}: {details['error']}")
+                                    continue
+                                
+                                # Update the grant with details
+                                update_result = update_grant_details(grant_id, details)
+                                
+                                if "error" in update_result:
+                                    logger.error(f"Error updating grant {grant_id} with details: {update_result['error']}")
+                                else:
+                                    details_fetched += 1
+                                    logger.info(f"Successfully updated grant {grant_id} with details")
+                            except Exception as e:
+                                logger.error(f"Error processing details for grant {grant_id}: {str(e)}")
+                        
+                        results["total_details_fetched"] += details_fetched
+                        logger.info(f"Fetched and saved details for {details_fetched} grants")
                     
                     # Update the keyword's execution_date
                     client.table("keywords").update({

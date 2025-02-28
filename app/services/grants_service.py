@@ -2,7 +2,7 @@ import httpx
 import json
 import logging
 from app.core.config import settings
-from app.utils.supabase import save_grants_data
+from app.utils.supabase import save_grants_data, update_grant_details
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -58,6 +58,84 @@ async def fetch_grants_data(keyword="", date_range="30", opp_statuses="forecaste
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}")
         return {"error": f"An unexpected error occurred: {e}"}
+
+async def fetch_grant_details(opp_id):
+    """
+    Fetch detailed information about a specific grant opportunity.
+    
+    Args:
+        opp_id (str): The opportunity ID to fetch details for
+        
+    Returns:
+        dict: The detailed grant information
+    """
+    url = "https://apply07.grants.gov/grantsws/rest/opportunity/details"
+    
+    # The API expects form data, not JSON
+    data = {
+        "oppId": opp_id
+    }
+    
+    headers = {
+        "Accept": "application/json",
+        # Don't set Content-Type header, let httpx set it correctly for form data
+    }
+    
+    logger.info(f"Fetching grant details for opportunity ID: {opp_id}")
+    
+    async with httpx.AsyncClient() as client:
+        # Try multiple approaches to handle the API's requirements
+        
+        # Approach 1: Using form data
+        try:
+            logger.info(f"Trying approach 1 (form data) for {opp_id}")
+            response = await client.post(url, data=data, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            logger.info(f"Successfully fetched grant details using approach 1. Status code: {response.status_code}")
+            return data
+        except Exception as e1:
+            logger.error(f"Approach 1 failed: {e1}")
+            
+            # Approach 2: Using URL parameters with POST
+            try:
+                logger.info(f"Trying approach 2 (URL parameters with POST) for {opp_id}")
+                alt_url = f"{url}?oppId={opp_id}"
+                alt_response = await client.post(alt_url, headers={"Accept": "application/json"})
+                alt_response.raise_for_status()
+                alt_data = alt_response.json()
+                logger.info(f"Successfully fetched grant details using approach 2. Status code: {alt_response.status_code}")
+                return alt_data
+            except Exception as e2:
+                logger.error(f"Approach 2 failed: {e2}")
+                
+                # Approach 3: Using URL parameters with GET
+                try:
+                    logger.info(f"Trying approach 3 (URL parameters with GET) for {opp_id}")
+                    alt_url2 = f"{url}?oppId={opp_id}"
+                    alt_response2 = await client.get(alt_url2, headers={"Accept": "application/json"})
+                    alt_response2.raise_for_status()
+                    alt_data2 = alt_response2.json()
+                    logger.info(f"Successfully fetched grant details using approach 3. Status code: {alt_response2.status_code}")
+                    return alt_data2
+                except Exception as e3:
+                    logger.error(f"Approach 3 failed: {e3}")
+                    
+                    # Approach 4: Using a different endpoint format
+                    try:
+                        logger.info(f"Trying approach 4 (different endpoint format) for {opp_id}")
+                        alt_url3 = f"https://apply07.grants.gov/grantsws/rest/opportunities/details/{opp_id}"
+                        alt_response3 = await client.get(alt_url3, headers={"Accept": "application/json"})
+                        alt_response3.raise_for_status()
+                        alt_data3 = alt_response3.json()
+                        logger.info(f"Successfully fetched grant details using approach 4. Status code: {alt_response3.status_code}")
+                        return alt_data3
+                    except Exception as e4:
+                        logger.error(f"All approaches failed. Last error: {e4}")
+                        return {
+                            "error": "Failed to fetch grant details after trying multiple approaches",
+                            "details": f"Errors: 1: {e1}, 2: {e2}, 3: {e3}, 4: {e4}"
+                        }
 
 async def fetch_and_save_grants_data(keyword="", date_range="30", opp_statuses="forecasted|posted", rows=5000, sort_by="openDate|desc", save_to_supabase=True):
     """

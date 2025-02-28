@@ -3,6 +3,7 @@ from typing import List, Optional
 
 from app.models.grants import GrantsSearchParams, GrantsResponse
 from app.services.grants_service import fetch_and_save_grants_data
+from app.utils.supabase import get_grants_by_keyword
 
 router = APIRouter()
 
@@ -46,6 +47,25 @@ async def search_grants_get(
         sort_by=sort_by,
         save_to_supabase=save_to_supabase
     )
+    
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+    
+    return result
+
+@router.get("/by-keyword/{keyword}", response_model=dict)
+async def get_grants_for_keyword(
+    keyword: str,
+    limit: int = Query(100, description="Maximum number of results to return"),
+    offset: int = Query(0, description="Offset for pagination")
+):
+    """
+    Retrieve grants that match a specific keyword.
+    
+    This endpoint returns grants that have the specified keyword in their search_keyword field,
+    which may be a comma-separated list of keywords.
+    """
+    result = get_grants_by_keyword(keyword, limit, offset)
     
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])

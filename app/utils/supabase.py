@@ -114,10 +114,28 @@ def save_grants_data(data):
                 }
                 
                 # Check if the grant already exists before upserting
-                existing = client.table("grants").select("id").eq("id", opp_id).execute()
+                existing = client.table("grants").select("id", "search_keyword").eq("id", opp_id).execute()
                 
                 if existing and existing.data and len(existing.data) > 0:
                     logger.info(f"Grant {opp_id} already exists in database, updating")
+                    
+                    # If the grant already exists, check if we need to update the search_keyword
+                    existing_keyword = existing.data[0].get("search_keyword", "")
+                    
+                    # If there's a new keyword and it's not already in the existing keywords
+                    if search_keyword and search_keyword not in existing_keyword:
+                        # Append the new keyword to the existing ones
+                        if existing_keyword:
+                            # Add the new keyword with a separator
+                            upsert_data["search_keyword"] = f"{existing_keyword},{search_keyword}"
+                            logger.info(f"Appending keyword '{search_keyword}' to existing keywords '{existing_keyword}'")
+                        else:
+                            # Just use the new keyword if there's no existing one
+                            upsert_data["search_keyword"] = search_keyword
+                            logger.info(f"Setting keyword '{search_keyword}' for grant {opp_id}")
+                    else:
+                        # Keep the existing keyword(s)
+                        upsert_data["search_keyword"] = existing_keyword
                 else:
                     logger.info(f"Grant {opp_id} is new, inserting")
                 
@@ -142,4 +160,356 @@ def save_grants_data(data):
         return {"error": str(e)}
     except Exception as e:
         logger.error(f"Error saving data to Supabase: {str(e)}")
-        return {"error": f"Error saving data to Supabase: {str(e)}"} 
+        return {"error": f"Error saving data to Supabase: {str(e)}"}
+
+async def update_grant_details(grant_id, details_data):
+    """
+    Update a grant record with detailed information.
+    
+    Args:
+        grant_id (str): The ID of the grant to update
+        details_data (dict): The detailed grant information
+        
+    Returns:
+        dict: The response from Supabase
+    """
+    try:
+        logger.info(f"Updating grant {grant_id} with detailed information")
+        logger.info(f"Details data type: {type(details_data)}")
+        logger.info(f"Details data structure: {str(details_data)[:500]}...")  # Log first 500 chars to avoid huge logs
+        
+        client = get_supabase_client()
+        
+        if not details_data or "error" in details_data:
+            logger.error(f"Invalid details data for grant {grant_id}")
+            return {"error": "Invalid details data"}
+        
+        # Extract relevant details from the response
+        grant_details = {}
+        
+        # Handle the direct response format we're actually receiving
+        if isinstance(details_data, dict) and "synopsis" in details_data:
+            logger.info(f"Processing direct response format with synopsis")
+            
+            # Basic grant information
+            if "opportunityNumber" in details_data:
+                grant_details["number"] = details_data.get("opportunityNumber", "")
+            
+            if "opportunityTitle" in details_data:
+                grant_details["title"] = details_data.get("opportunityTitle", "")
+            
+            if "owningAgencyCode" in details_data:
+                grant_details["agency_code"] = details_data.get("owningAgencyCode", "")
+            
+            # Opportunity category
+            if "opportunityCategory" in details_data and isinstance(details_data["opportunityCategory"], dict):
+                category = details_data["opportunityCategory"]
+                grant_details["opportunity_category"] = f"{category.get('category', '')}: {category.get('description', '')}"
+            
+            # Synopsis information
+            if "synopsis" in details_data and isinstance(details_data["synopsis"], dict):
+                synopsis = details_data["synopsis"]
+                logger.info(f"Synopsis keys: {list(synopsis.keys())}")
+                
+                # Agency information
+                if "agencyName" in synopsis:
+                    grant_details["agency"] = synopsis.get("agencyName", "")
+                
+                # Description
+                if "synopsisDesc" in synopsis:
+                    grant_details["synopsis_desc"] = synopsis.get("synopsisDesc", "")
+                    grant_details["description"] = synopsis.get("synopsisDesc", "")
+                
+                # Dates
+                if "responseDate" in synopsis:
+                    grant_details["close_date"] = synopsis.get("responseDate", "")
+                    grant_details["response_date"] = synopsis.get("responseDate", "")
+                
+                if "postingDate" in synopsis:
+                    grant_details["open_date"] = synopsis.get("postingDate", "")
+                    grant_details["posting_date"] = synopsis.get("postingDate", "")
+                
+                # Funding information
+                if "estimatedFunding" in synopsis:
+                    grant_details["estimated_funding"] = synopsis.get("estimatedFunding", "")
+                
+                if "awardCeiling" in synopsis:
+                    grant_details["award_ceiling"] = synopsis.get("awardCeiling", "")
+                
+                if "awardFloor" in synopsis:
+                    grant_details["award_floor"] = synopsis.get("awardFloor", "")
+                
+                if "numberOfAwards" in synopsis:
+                    grant_details["expected_awards"] = synopsis.get("numberOfAwards", "")
+                
+                if "costSharing" in synopsis:
+                    grant_details["cost_sharing"] = str(synopsis.get("costSharing", ""))
+                
+                # Eligibility information
+                if "applicantEligibilityDesc" in synopsis:
+                    grant_details["applicant_eligibility_desc"] = synopsis.get("applicantEligibilityDesc", "")
+                
+                # Extract applicant types
+                if "applicantTypes" in synopsis and isinstance(synopsis["applicantTypes"], list):
+                    applicant_types = [item.get("description", "") for item in synopsis["applicantTypes"] if "description" in item]
+                    if applicant_types:
+                        grant_details["eligibility_categories"] = applicant_types
+                
+                # Extract funding instruments
+                if "fundingInstruments" in synopsis and isinstance(synopsis["fundingInstruments"], list) and len(synopsis["fundingInstruments"]) > 0:
+                    funding_instruments = [item.get("description", "") for item in synopsis["fundingInstruments"] if "description" in item]
+                    if funding_instruments:
+                        grant_details["funding_instrument_type"] = ", ".join(funding_instruments)
+                
+                # Extract funding activity categories
+                if "fundingActivityCategories" in synopsis and isinstance(synopsis["fundingActivityCategories"], list):
+                    funding_categories = [item.get("description", "") for item in synopsis["fundingActivityCategories"] if "description" in item]
+                    if funding_categories:
+                        grant_details["funding_activity_categories"] = funding_categories
+                
+                # Agency contacts
+                agency_contacts = {}
+                if "agencyContactName" in synopsis:
+                    agency_contacts["name"] = synopsis.get("agencyContactName", "")
+                if "agencyContactPhone" in synopsis:
+                    agency_contacts["phone"] = synopsis.get("agencyContactPhone", "")
+                if "agencyContactEmail" in synopsis:
+                    agency_contacts["email"] = synopsis.get("agencyContactEmail", "")
+                if "agencyContactDesc" in synopsis:
+                    agency_contacts["description"] = synopsis.get("agencyContactDesc", "")
+                
+                if agency_contacts:
+                    grant_details["agency_contacts"] = agency_contacts
+            
+            # Check for forecast data as well
+            if "forecast" in details_data and isinstance(details_data["forecast"], dict):
+                forecast = details_data["forecast"]
+                logger.info(f"Found forecast data with keys: {list(forecast.keys())}")
+                
+                # If we don't have a description from synopsis, try to get it from forecast
+                if "description" not in grant_details and "description" in forecast:
+                    grant_details["description"] = forecast.get("description", "")
+                
+                # Additional forecast information
+                if "estimatedFunding" in forecast and "estimated_funding" not in grant_details:
+                    grant_details["estimated_funding"] = forecast.get("estimatedFunding", "")
+                
+                if "expectedNumberOfAwards" in forecast and "expected_awards" not in grant_details:
+                    grant_details["expected_awards"] = forecast.get("expectedNumberOfAwards", "")
+        
+        # Handle the new response format from the sample (list format)
+        elif isinstance(details_data, list) and len(details_data) > 0:
+            # Use the first item in the list
+            data = details_data[0]
+            logger.info(f"Processing list data format, first item keys: {list(data.keys())}")
+            
+            # Basic grant information
+            if "opportunityNumber" in data:
+                grant_details["number"] = data.get("opportunityNumber", "")
+            
+            if "opportunityTitle" in data:
+                grant_details["title"] = data.get("opportunityTitle", "")
+            
+            if "owningAgencyCode" in data:
+                grant_details["agency_code"] = data.get("owningAgencyCode", "")
+            
+            # Opportunity category
+            if "opportunityCategory" in data and isinstance(data["opportunityCategory"], dict):
+                category = data["opportunityCategory"]
+                grant_details["opportunity_category"] = f"{category.get('category', '')}: {category.get('description', '')}"
+            
+            # Synopsis information
+            if "synopsis" in data and isinstance(data["synopsis"], dict):
+                synopsis = data["synopsis"]
+                logger.info(f"Synopsis keys: {list(synopsis.keys())}")
+                
+                # Agency information
+                if "agencyName" in synopsis:
+                    grant_details["agency"] = synopsis.get("agencyName", "")
+                
+                # Description
+                if "synopsisDesc" in synopsis:
+                    grant_details["synopsis_desc"] = synopsis.get("synopsisDesc", "")
+                    grant_details["description"] = synopsis.get("synopsisDesc", "")
+                
+                # Dates
+                if "responseDate" in synopsis:
+                    grant_details["close_date"] = synopsis.get("responseDate", "")
+                    grant_details["response_date"] = synopsis.get("responseDate", "")
+                
+                if "postingDate" in synopsis:
+                    grant_details["open_date"] = synopsis.get("postingDate", "")
+                    grant_details["posting_date"] = synopsis.get("postingDate", "")
+                
+                # Funding information
+                if "estimatedFunding" in synopsis:
+                    grant_details["estimated_funding"] = synopsis.get("estimatedFunding", "")
+                
+                if "awardCeiling" in synopsis:
+                    grant_details["award_ceiling"] = synopsis.get("awardCeiling", "")
+                
+                if "awardFloor" in synopsis:
+                    grant_details["award_floor"] = synopsis.get("awardFloor", "")
+                
+                if "numberOfAwards" in synopsis:
+                    grant_details["expected_awards"] = synopsis.get("numberOfAwards", "")
+                
+                if "costSharing" in synopsis:
+                    grant_details["cost_sharing"] = str(synopsis.get("costSharing", ""))
+                
+                # Eligibility information
+                if "applicantEligibilityDesc" in synopsis:
+                    grant_details["applicant_eligibility_desc"] = synopsis.get("applicantEligibilityDesc", "")
+                
+                # Extract applicant types
+                if "applicantTypes" in synopsis and isinstance(synopsis["applicantTypes"], list):
+                    applicant_types = [item.get("description", "") for item in synopsis["applicantTypes"] if "description" in item]
+                    if applicant_types:
+                        grant_details["eligibility_categories"] = applicant_types
+                
+                # Extract funding instruments
+                if "fundingInstruments" in synopsis and isinstance(synopsis["fundingInstruments"], list) and len(synopsis["fundingInstruments"]) > 0:
+                    funding_instruments = [item.get("description", "") for item in synopsis["fundingInstruments"] if "description" in item]
+                    if funding_instruments:
+                        grant_details["funding_instrument_type"] = ", ".join(funding_instruments)
+                
+                # Extract funding activity categories
+                if "fundingActivityCategories" in synopsis and isinstance(synopsis["fundingActivityCategories"], list):
+                    funding_categories = [item.get("description", "") for item in synopsis["fundingActivityCategories"] if "description" in item]
+                    if funding_categories:
+                        grant_details["funding_activity_categories"] = funding_categories
+                
+                # Agency contacts
+                agency_contacts = {}
+                if "agencyContactName" in synopsis:
+                    agency_contacts["name"] = synopsis.get("agencyContactName", "")
+                if "agencyContactPhone" in synopsis:
+                    agency_contacts["phone"] = synopsis.get("agencyContactPhone", "")
+                if "agencyContactEmail" in synopsis:
+                    agency_contacts["email"] = synopsis.get("agencyContactEmail", "")
+                if "agencyContactDesc" in synopsis:
+                    agency_contacts["description"] = synopsis.get("agencyContactDesc", "")
+                
+                if agency_contacts:
+                    grant_details["agency_contacts"] = agency_contacts
+        
+        # Handle the old response format as a fallback
+        elif "detailsResponse" in details_data:
+            details = details_data["detailsResponse"]
+            logger.info(f"Processing detailsResponse format, keys: {list(details.keys())}")
+            
+            # Extract opportunity details
+            if "opportunity" in details:
+                opp = details["opportunity"]
+                logger.info(f"Opportunity keys: {list(opp.keys())}")
+                grant_details["description"] = opp.get("description", "")
+                grant_details["category_explanation"] = opp.get("categoryExplanation", "")
+                grant_details["award_ceiling"] = opp.get("awardCeiling", "")
+                grant_details["award_floor"] = opp.get("awardFloor", "")
+                grant_details["expected_awards"] = opp.get("expectedNumberOfAwards", "")
+                grant_details["funding_instrument_type"] = opp.get("fundingInstrumentType", "")
+                grant_details["eligibility_categories"] = opp.get("eligibilityCategories", [])
+                grant_details["cost_sharing"] = opp.get("costSharing", "")
+                
+                # Add any additional fields that might be useful
+                if "additionalInformation" in opp:
+                    grant_details["additional_information"] = opp["additionalInformation"]
+                
+                if "agencyContactList" in opp:
+                    grant_details["agency_contacts"] = opp["agencyContactList"]
+        # Handle the format with direct keys like 'opportunityNumber', 'opportunityTitle', etc.
+        elif isinstance(details_data, dict) and "opportunityNumber" in details_data and "opportunityTitle" in details_data:
+            logger.info(f"Processing direct keys format for grant {grant_id}")
+            
+            # Basic grant information
+            grant_details["number"] = details_data.get("opportunityNumber", "")
+            grant_details["title"] = details_data.get("opportunityTitle", "")
+            grant_details["agency_code"] = details_data.get("owningAgencyCode", "")
+            
+            # Opportunity category
+            if "opportunityCategory" in details_data and isinstance(details_data["opportunityCategory"], dict):
+                category = details_data["opportunityCategory"]
+                grant_details["opportunity_category"] = f"{category.get('category', '')}: {category.get('description', '')}"
+            
+            # Check for agency details
+            if "agencyDetails" in details_data and isinstance(details_data["agencyDetails"], dict):
+                agency_details = details_data["agencyDetails"]
+                grant_details["agency"] = agency_details.get("name", "")
+            
+            # Check for forecast data
+            if "forecast" in details_data and isinstance(details_data["forecast"], dict):
+                forecast = details_data["forecast"]
+                
+                # Description and funding information from forecast
+                if "description" in forecast:
+                    grant_details["description"] = forecast.get("description", "")
+                
+                if "estimatedFunding" in forecast:
+                    grant_details["estimated_funding"] = forecast.get("estimatedFunding", "")
+                
+                if "expectedNumberOfAwards" in forecast:
+                    grant_details["expected_awards"] = forecast.get("expectedNumberOfAwards", "")
+                
+                if "awardCeiling" in forecast:
+                    grant_details["award_ceiling"] = forecast.get("awardCeiling", "")
+                
+                if "awardFloor" in forecast:
+                    grant_details["award_floor"] = forecast.get("awardFloor", "")
+                
+                # Dates from forecast
+                if "postDate" in forecast:
+                    grant_details["open_date"] = forecast.get("postDate", "")
+                    grant_details["posting_date"] = forecast.get("postDate", "")
+                
+                if "closeDate" in forecast:
+                    grant_details["close_date"] = forecast.get("closeDate", "")
+                    grant_details["response_date"] = forecast.get("closeDate", "")
+        else:
+            logger.warning(f"Unrecognized details data format for grant {grant_id}. Keys: {list(details_data.keys()) if isinstance(details_data, dict) else 'Not a dict'}")
+        
+        # Add the full details data as a JSON field
+        grant_details["details_raw_data"] = details_data
+        
+        logger.info(f"Extracted grant details: {grant_details.keys()}")
+        
+        # Update the grant record
+        result = client.table("grants").update(grant_details).eq("id", grant_id).execute()
+        
+        logger.info(f"Successfully updated grant {grant_id} with detailed information")
+        return {
+            "success": True,
+            "grant_id": grant_id,
+            "result": result
+        }
+    except Exception as e:
+        logger.error(f"Error updating grant {grant_id} with details: {str(e)}")
+        return {"error": f"Error updating grant details: {str(e)}"}
+
+def get_grants_by_keyword(keyword, limit=100, offset=0):
+    """
+    Retrieve grants that match a specific keyword.
+    
+    Args:
+        keyword (str): The keyword to search for
+        limit (int): Maximum number of results to return
+        offset (int): Offset for pagination
+        
+    Returns:
+        dict: The grants that match the keyword
+    """
+    try:
+        logger.info(f"Retrieving grants for keyword: {keyword}")
+        client = get_supabase_client()
+        
+        # Use LIKE operator to match grants where the keyword is part of a comma-separated list
+        result = client.table("grants").select("*").like("search_keyword", f"%{keyword}%").limit(limit).offset(offset).execute()
+        
+        logger.info(f"Found {len(result.data)} grants for keyword '{keyword}'")
+        return {
+            "success": True,
+            "count": len(result.data),
+            "data": result.data
+        }
+    except Exception as e:
+        logger.error(f"Error retrieving grants for keyword '{keyword}': {str(e)}")
+        return {"error": f"Error retrieving grants: {str(e)}"} 
