@@ -6,6 +6,7 @@ import logging
 from app.utils.supabase import get_supabase_client
 from app.core.config import settings
 from app.utils.organization_utils import process_new_organization
+from app.utils.organization_grant_matcher import match_organization_with_grants, save_organization_grant_matches
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -153,4 +154,104 @@ async def generate_organization_summaries(
         raise HTTPException(
             status_code=500,
             detail=f"Error generating organization summaries: {str(e)}"
+        )
+
+@router.post("/match-organizations-with-grants")
+async def match_organizations_with_grants(
+    batch_size: int = Query(10, description="Number of organizations to process in each batch"),
+    force_rematch: bool = Query(False, description="Force rematch even if matches exist")
+):
+    """
+    Match organizations with relevant grants.
+    
+    Args:
+        batch_size (int): Number of organizations to process in each batch
+        force_rematch (bool): Whether to rematch organizations that already have matches
+        
+    Returns:
+        dict: Results of the matching process
+    """
+    try:
+        logger.info(f"Starting organization-grant matching. Batch size: {batch_size}, Force rematch: {force_rematch}")
+        client = get_supabase_client()
+        
+        # Get organizations to process
+        query = client.table("organizations").select("*")
+        
+        if not force_rematch:
+            # First, get organizations that already have matches
+            matched_orgs_result = client.table("organization_grant_matches").select("organization_id").execute()
+            matched_org_ids = [match["organization_id"] for match in matched_orgs_result.data]
+            
+            if matched_org_ids:
+                # Exclude organizations that already have matches
+                query = query.not_.in_("id", matched_org_ids)
+        
+        # Add limit
+        query = query.limit(batch_size)
+        
+        # Execute query
+        result = query.execute()
+        organizations = result.data
+        
+        if not organizations:
+            return {
+                "success": True,
+                "message": "No organizations found that need matching",
+                "processed": 0
+            }
+        
+        logger.info(f"Found {len(organizations)} organizations to process")
+        
+        # Get all grants
+        grants_result = client.table("grants").select("*").execute()
+        grants = grants_result.data
+        
+        if not grants:
+            return {
+                "success": False,
+                "message": "No grants found in the database",
+                "processed": 0
+            }
+        
+        # Process each organization
+        processed = 0
+        errors = []
+        
+        for org in organizations:
+            try:
+                # Match organization with grants
+                matches = await match_organization_with_grants(org, grants)
+                
+                if matches:
+                    # Save matches
+                    save_result = await save_organization_grant_matches(org["id"], matches)
+                    if save_result.get("success"):
+                        processed += 1
+                    else:
+                        errors.append({
+                            "organization_id": org.get("id"),
+                            "error": save_result.get("error", "Unknown error")
+                        })
+                else:
+                    logger.info(f"No matches found for organization: {org.get('organization_name')}")
+                    
+            except Exception as e:
+                errors.append({
+                    "organization_id": org.get("id"),
+                    "error": str(e)
+                })
+        
+        return {
+            "success": True,
+            "message": f"Processed {processed} organizations",
+            "processed": processed,
+            "errors": errors if errors else None
+        }
+        
+    except Exception as e:
+        logger.error(f"Error matching organizations with grants: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error matching organizations with grants: {str(e)}"
         )
