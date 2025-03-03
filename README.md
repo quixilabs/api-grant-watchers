@@ -13,6 +13,8 @@ A FastAPI application that fetches data from the Grants.gov API and stores it in
 - Automated checking for new grants based on saved keywords
 - Statistics on grants found per keyword
 - Detailed grant information fetched from the Grants.gov details API
+- Automatic generation of grant summaries using OpenAI's GPT model
+- Webhook support for processing new organization records and generating summaries
 
 ## Setup
 
@@ -439,3 +441,29 @@ When grants are saved to Supabase:
 3. Both the raw data and search parameters are stored for reference
 4. For each new grant, detailed information is fetched from the Grants.gov details API
 5. The detailed information includes award amounts, eligibility criteria, and contact information
+
+## Webhooks
+
+The API supports webhooks for various events:
+
+### Organization Webhook
+
+When a new organization is added to the Supabase `organizations` table, a webhook is triggered that:
+
+1. Receives the new organization data
+2. Generates a summary of the organization using OpenAI's GPT model
+3. Updates the organization record with the summary
+
+To set up this webhook in Supabase:
+
+1. Go to your Supabase project dashboard
+2. Navigate to Database > Webhooks
+3. Create a new webhook with the following settings:
+   - Name: `organization_summary_generator`
+   - Table: `organizations`
+   - Events: `INSERT`
+   - HTTP Method: `POST`
+   - URL: `https://your-api-url.com/api/v1/webhooks`
+   - Headers: Add a header `x-webhook-signature` with a secret value that matches your `WEBHOOK_SECRET` environment variable
+
+The webhook will automatically process new organizations and generate summaries based on the provided information.
