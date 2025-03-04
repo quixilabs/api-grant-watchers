@@ -1,7 +1,12 @@
-from fastapi import APIRouter
-from app.api.routes import webhooks, grants, keyword_grants
+from app.api.routes.grants import router as grants_router
+from app.api.routes.keywords import router as keywords_router
+from app.api.routes.webhooks import router as webhooks_router
+from app.api.routes.organizations import router as organizations_router
 
-api_router = APIRouter()
-api_router.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
-api_router.include_router(grants.router, prefix="/grants", tags=["grants"])
-api_router.include_router(keyword_grants.router, prefix="/keywords", tags=["keywords"])
+# Export the routers with their router attribute
+grants = type('RouterWrapper', (), {'router': grants_router})
+keywords = type('RouterWrapper', (), {'router': keywords_router})
+webhooks = type('RouterWrapper', (), {'router': webhooks_router})
+organizations = type('RouterWrapper', (), {'router': organizations_router})
+
+__all__ = ['grants', 'keywords', 'webhooks', 'organizations']
