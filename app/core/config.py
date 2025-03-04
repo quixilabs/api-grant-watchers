@@ -2,6 +2,7 @@ import os
 import logging
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
+from pydantic import Field
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -50,13 +51,21 @@ class Settings(BaseSettings):
     SUPABASE_KEY: str = os.environ.get("SUPABASE_KEY", "")
     OPENAI_API_KEY: str = os.environ.get("OPENAI_API_KEY", "")
     GRANTS_API_URL: str = "https://apply07.grants.gov/grantsws/rest/opportunities/search"
+    BEEHIIV_API_KEY: str = os.environ.get("BEEHIIV_API_KEY", "")
+    BEEHIIV_PUBLICATION_ID: str = os.environ.get("BEEHIIV_PUBLICATION_ID", "")
     
     # Project name
     PROJECT_NAME: str = "Grants Webhooks API"
     
+    # Add Mailgun settings
+    mailgun_api_key: str = Field(alias="MAILGUN_API_KEY")
+    mailgun_domain: str = Field(alias="MAILGUN_DOMAIN")
+    mailgun_from_email: str = Field(alias="MAILGUN_FROM_EMAIL")
+    
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        case_sensitive = True
 
 settings = Settings()
 logger.info(f"Settings initialized with SUPABASE_URL: {settings.SUPABASE_URL}")

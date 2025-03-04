@@ -7,6 +7,7 @@ from app.utils.supabase import get_supabase_client
 from app.core.config import settings
 from app.utils.organization_utils import process_new_organization
 from app.utils.organization_grant_matcher import match_organization_with_grants, save_organization_grant_matches
+from app.utils.mailgun_client import send_grant_match_email
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -255,3 +256,75 @@ async def match_organizations_with_grants(
             status_code=500,
             detail=f"Error matching organizations with grants: {str(e)}"
         )
+
+@router.post("/create-grant-match-campaigns")
+async def create_grant_match_campaigns(
+    batch_size: int = Query(default=5, gt=0),
+    force_rematch: bool = Query(default=False)
+):
+    """
+    Create email campaigns for organizations with grant matches.
+    """
+    try:
+        logger.info(f"Starting campaign creation. Batch size: {batch_size}")
+        
+        # Create Supabase client
+        supabase = get_supabase_client()
+        if not supabase:
+            return {"error": "Failed to create Supabase client"}
+
+        # Get organizations that have matches but no campaigns
+        response = supabase.table("organization_grant_matches").select("organization_id").limit(batch_size).execute()
+        if len(response.data) == 0:
+            return {"message": "No organizations found that need campaigns"}
+
+        results = []
+        for org_match in response.data:
+            org_id = org_match["organization_id"]
+            
+            # Get organization details
+            org_response = supabase.table("organizations").select("*").eq("id", org_id).execute()
+            if not org_response.data:
+                logger.error(f"Organization not found: {org_id}")
+                continue
+            
+            organization = org_response.data[0]
+            
+            # Get all grant matches for this organization
+            matches_response = supabase.table("organization_grant_matches").select("*").eq("organization_id", org_id).execute()
+            if not matches_response.data:
+                logger.error(f"No matches found for organization: {organization.get('organization_name')}")
+                continue
+                
+            # Get grant details for each match
+            grant_matches = []
+            for match in matches_response.data:
+                grant_response = supabase.table("grants").select("*").eq("id", match["grant_id"]).execute()
+                if grant_response.data:
+                    grant_matches.append({
+                        "grant": grant_response.data[0],
+                        "match_score": match["match_score"],
+                        "match_reason": match["match_reason"]
+                    })
+
+            # Send email via Mailgun
+            if organization.get("email"):  # Make sure organization has an email
+                result = await send_grant_match_email(
+                    organization_data=organization,
+                    grant_matches=grant_matches,
+                    to_email=organization["email"]
+                )
+                results.append(result)
+            else:
+                logger.error(f"No email found for organization: {organization.get('organization_name')}")
+                results.append({
+                    "success": False,
+                    "error": f"No email address found for organization {organization.get('organization_name')}",
+                    "organization_id": org_id
+                })
+
+        return {"results": results}
+
+    except Exception as e:
+        logger.error(f"Error in create_grant_match_campaigns: {str(e)}")
+        return {"error": str(e)}
