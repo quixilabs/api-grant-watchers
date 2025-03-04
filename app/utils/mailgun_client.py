@@ -61,45 +61,35 @@ async def send_grant_match_email(organization_data: Dict[str, Any], grant_matche
 
 def generate_email_content(organization_data: Dict[str, Any], grant_matches: List[Dict[str, Any]]) -> str:
     """
-    Generate HTML content for the email.
+    Generate HTML content for the email campaign.
     """
-    content = f"""
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h1 style="color: #333; text-align: center;">Grant Opportunities for {organization_data.get('organization_name')}</h1>
-        
-        <p style="color: #666; line-height: 1.6;">
-            Based on your organization's profile and interests, we've identified the following grant opportunities that match your criteria:
-        </p>
-        
-        <div style="margin: 20px 0;">
-    """
+    content = [
+        '<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">',
+        f'<h1 style="color: #333; text-align: center;">Grant Opportunities for {organization_data.get("organization_name")}</h1>',
+        '<p style="color: #666; line-height: 1.6;">Based on your organization\'s profile and interests, we\'ve identified the following grant opportunities that match your criteria:</p>',
+        '<div style="margin: 20px 0;">'
+    ]
 
     for match in grant_matches:
         grant = match.get("grant", {})
-        content += f"""
-        <div style="margin-bottom: 30px; padding: 20px; border: 1px solid #ddd; border-radius: 5px; background-color: #f9f9f9;">
-            <h2 style="color: #2c5282; margin-top: 0;">{grant.get('title', 'N/A')}</h2>
-            <p><strong>Agency:</strong> {grant.get('agency', 'N/A')}</p>
-            <p><strong>Match Score:</strong> {float(match.get('match_score', 0)) * 100:.0f}%</p>
-            <p><strong>Why This Matches:</strong> {match.get('match_reason', 'N/A')}</p>
-            <p><strong>Award Range:</strong> ${grant.get('award_floor', 'N/A')} - ${grant.get('award_ceiling', 'N/A')}</p>
-            <p><strong>Close Date:</strong> {grant.get('close_date', 'N/A')}</p>
-            <div style="margin-top: 15px;">
-                <a href="https://www.grants.gov/search-grants.html?keywords={grant.get('id', '')}" 
-                   style="background-color: #4299e1; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">
-                   View Grant Details
-                </a>
-            </div>
-        </div>
-        """
+        content.extend([
+            '<div style="margin-bottom: 30px; padding: 20px; border: 1px solid #ddd; border-radius: 5px; background-color: #f9f9f9;">',
+            f'<h2 style="color: #2c5282; margin-top: 0;">{grant.get("title", "N/A")}</h2>',
+            f'<p><strong>Agency:</strong> {grant.get("agency", "N/A")}</p>',
+            f'<p><strong>Match Score:</strong> {float(match.get("match_score", 0)) * 100:.0f}%</p>',
+            f'<p><strong>Why This Matches:</strong> {match.get("match_reason", "N/A")}</p>',
+            f'<p><strong>Award Range:</strong> ${grant.get("award_floor", "N/A")} - ${grant.get("award_ceiling", "N/A")}</p>',
+            f'<p><strong>Close Date:</strong> {grant.get("close_date", "N/A")}</p>',
+            '<div style="margin-top: 15px;">',
+            f'<a href="https://www.grants.gov/search-grants.html?keywords={grant.get("id", "")}" style="background-color: #4299e1; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">View Grant Details</a>',
+            '</div>',
+            '</div>'
+        ])
 
-    content += """
-        </div>
-        
-        <p style="margin-top: 30px; color: #666; text-align: center; padding: 20px; background-color: #f5f5f5; border-radius: 5px;">
-            Need assistance with your grant application? Our team is here to help!
-        </p>
-    </div>
-    """
+    content.extend([
+        '</div>',
+        '<p style="margin-top: 30px; color: #666; text-align: center; padding: 20px; background-color: #f5f5f5; border-radius: 5px;">Need assistance with your grant application? Our team is here to help!</p>',
+        '</div>'
+    ])
 
-    return content 
+    return ''.join(content) 
