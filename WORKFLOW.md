@@ -37,58 +37,95 @@ graph TD
 
 ```mermaid
 graph TD
-    A[Start] --> B[Get batch size & force flag]
-    B --> C[Get grants without summaries]
-    C --> D[For each grant]
-    D --> E{Has existing summary?}
-    E -->|Yes| F{Force regenerate?}
-    F -->|Yes| G[Generate new summary]
-    F -->|No| H[Skip grant]
-    E -->|No| G
-    G --> I[Save summary to database]
-    I --> D
-    H --> D
-    D -->|Done| J[Return results]
-    J --> K[End]
+    A[Start] --> B[Create Task Status Record]
+    B --> C[Get Total Grants Count]
+    C --> D[Start Background Task]
+    D --> E[Initialize Progress Tracking]
+    E --> F[For each grant]
+    F --> G{Has existing summary?}
+    G -->|Yes| H{Force regenerate?}
+    H -->|Yes| I[Generate new summary]
+    H -->|No| J[Skip grant]
+    G -->|No| I
+    I --> K[Update grant record]
+    K --> L[Update task status]
+    L --> M[Wait 2 minutes]
+    M --> F
+    J --> F
+    F -->|Done| N[Mark task as completed]
+    N --> O[End]
+
+    subgraph "Background Task"
+        E --> F
+        F --> N
+    end
 ```
 
 **Algorithm:**
-1. Accept batch size and force_regenerate parameters
-2. Retrieve grants without summaries (or all if force_regenerate)
-3. For each grant:
-   - Check if summary exists
-   - If no summary or force_regenerate:
-     - Generate summary using OpenAI
-     - Save to database
-4. Return processing results
+1. Create a background task status record in the database
+2. Get total number of grants to process
+3. Start an asynchronous background task that:
+   - Processes one grant every 2 minutes
+   - Skips grants that already have summaries (unless force_regenerate is True)
+   - Updates progress in real-time in the database
+   - Handles errors gracefully
+   - Can be monitored and controlled via API endpoints
+
+**Task Status Tracking:**
+- Status can be one of: "running", "completed", "failed", "stopped"
+- Tracks total items, processed items, failed items
+- Records current item being processed
+- Stores error messages if any
+- Maintains timestamps for start, completion, and last update
+
+**Monitoring and Control:**
+1. Check task status:
+   ```mermaid
+   graph LR
+       A[GET /task-status/{task_id}] --> B[Query Database]
+       B --> C[Return Status]
+   ```
+
+2. View active tasks:
+   ```mermaid
+   graph LR
+       A[GET /active-tasks] --> B[Query Running Tasks]
+       B --> C[Return Task List]
+   ```
+
+3. Stop task:
+   ```mermaid
+   graph LR
+       A[POST /stop-task/{task_id}] --> B[Cancel Task]
+       B --> C[Update Status]
+       C --> D[Cleanup Resources]
+   ```
 
 ### 1.3 Generate Single Grant Summary (`POST /api/v1/grants/generate-summary/{grant_id}`)
 
 ```mermaid
 graph TD
-    A[Start] --> B[Get grant ID & force flag]
-    B --> C[Fetch grant details]
-    C --> D{Grant exists?}
-    D -->|No| E[Return 404]
-    D -->|Yes| F{Has summary?}
-    F -->|Yes| G{Force regenerate?}
-    G -->|No| H[Return existing]
-    G -->|Yes| I[Generate new summary]
-    F -->|No| I
-    I --> J[Save to database]
-    J --> K[Return summary]
-    H --> K
-    K --> L[End]
+    A[Start] --> B[Get grant from database]
+    B --> C{Found?}
+    C -->|No| D[Return 404]
+    C -->|Yes| E{Has existing summary?}
+    E -->|Yes| F{Force regenerate?}
+    F -->|No| G[Return existing summary]
+    F -->|Yes| H[Generate new summary]
+    E -->|No| H
+    H --> I[Update grant record]
+    I --> J[Return result]
+    G --> J
+    D --> J
 ```
 
 **Algorithm:**
-1. Accept grant_id and force_regenerate parameters
-2. Fetch grant details from database
-3. If grant exists:
-   - Check for existing summary
-   - Generate new summary if none exists or force_regenerate is true
-   - Save and return summary
-4. Return 404 if grant not found
+1. Retrieve the grant from the database
+2. Check if it already has a summary
+3. If no summary or force_regenerate is True:
+   - Generate a new summary using Ollama
+   - Update the grant record
+4. Return the summary
 
 ## 2. Organization Management Endpoints
 
@@ -194,6 +231,48 @@ graph TD
    - Execute migration
    - Log results
 5. Return migration status
+
+## 5. Database Schema
+
+### 5.1 Grants Table
+- Basic grant information
+- Search keywords
+- Synopsis summary (JSONB)
+
+### 5.2 Background Task Status Table
+- Task ID (UUID)
+- Task Type (VARCHAR)
+- Status (VARCHAR)
+- Progress tracking fields
+- Timestamps
+- Error information
+
+## 6. Error Handling
+
+### 6.1 Background Tasks
+- Graceful error handling for individual grants
+- Task status updates on failures
+- Ability to retry failed items
+- Task cancellation support
+
+### 6.2 API Endpoints
+- Proper HTTP status codes
+- Detailed error messages
+- Input validation
+- Rate limiting protection
+
+## 7. Performance Considerations
+
+### 7.1 Rate Limiting
+- 2-minute delay between grant summaries
+- Ollama API rate limiting
+- Database connection pooling
+
+### 7.2 Resource Management
+- Asynchronous task processing
+- Background task cleanup
+- Memory usage optimization
+- Connection pooling
 
 ## Notes
 

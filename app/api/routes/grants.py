@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from app.models.grants import GrantsSearchParams, GrantsResponse
 from app.services.grants_service import fetch_and_save_grants_data
 from app.utils.supabase import get_grants_by_keyword, get_all_grants, update_grant_summary, get_supabase_client
 from app.utils.ollama_client import generate_grant_summary
+from app.utils.background_task_manager import task_manager
 
 router = APIRouter()
 
@@ -73,90 +74,86 @@ async def get_grants_for_keyword(
     
     return result
 
-@router.post("/generate-summaries", response_model=dict)
+@router.post("/generate-summaries", response_model=Dict[str, Any])
 async def generate_grant_summaries(
-    batch_size: int = Query(10, description="Number of grants to process in each batch"),
-    offset: int = Query(0, description="Offset for pagination"),
     force_regenerate: bool = Query(False, description="Whether to regenerate summaries for grants that already have them")
 ):
     """
-    Generate summaries for all grants in the database using GPT.
+    Start a background task to generate summaries for all grants in the database.
     
     This endpoint will:
-    1. Retrieve grants from the database
-    2. Generate a summary for each grant using GPT
-    3. Update the grant record with the summary
+    1. Create a background task status record
+    2. Start processing grants in the background
+    3. Return the task ID for status tracking
     
-    The process is batched to avoid timeouts and rate limits.
+    The process will:
+    - Skip grants that already have summaries (unless force_regenerate is True)
+    - Wait 2 minutes between each summary generation
+    - Update progress in real-time
     """
     try:
-        # Get grants from the database
-        grants_result = get_all_grants(limit=batch_size, offset=offset)
-        
-        if "error" in grants_result:
-            raise HTTPException(status_code=500, detail=grants_result["error"])
-        
-        grants = grants_result["data"]
-        
-        if not grants:
-            return {
-                "success": True,
-                "message": "No grants found to process",
-                "count": 0,
-                "processed": []
-            }
-        
-        # Process each grant
-        processed_grants = []
-        for grant in grants:
-            grant_id = grant.get("id")
-            
-            # Skip grants that already have a summary unless force_regenerate is True
-            if not force_regenerate and grant.get("synopsis_summary"):
-                processed_grants.append({
-                    "grant_id": grant_id,
-                    "status": "skipped",
-                    "message": "Grant already has a summary"
-                })
-                continue
-            
-            # Generate summary
-            summary = await generate_grant_summary(grant)
-            
-            if "error" in summary:
-                processed_grants.append({
-                    "grant_id": grant_id,
-                    "status": "error",
-                    "message": summary["error"]
-                })
-                continue
-            
-            # Update grant with summary
-            update_result = update_grant_summary(grant_id, summary)
-            
-            if "error" in update_result:
-                processed_grants.append({
-                    "grant_id": grant_id,
-                    "status": "error",
-                    "message": update_result["error"]
-                })
-                continue
-            
-            processed_grants.append({
-                "grant_id": grant_id,
-                "status": "success",
-                "summary": summary
-            })
+        # Start the background task
+        task_id = await task_manager.start_grant_summary_task()
         
         return {
             "success": True,
-            "message": f"Processed {len(processed_grants)} grants",
-            "count": len(processed_grants),
-            "next_offset": offset + batch_size,
-            "processed": processed_grants
+            "message": "Background task started successfully",
+            "task_id": task_id
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating summaries: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error starting background task: {str(e)}")
+
+@router.get("/task-status/{task_id}", response_model=Dict[str, Any])
+async def get_task_status(task_id: str):
+    """
+    Get the current status of a background task.
+    
+    Args:
+        task_id: The ID of the task to check
+        
+    Returns:
+        The current status and progress of the task
+    """
+    try:
+        status = await task_manager.get_task_status(task_id)
+        if not status:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return status
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting task status: {str(e)}")
+
+@router.get("/active-tasks", response_model=Dict[str, Dict[str, Any]])
+async def get_active_tasks():
+    """
+    Get information about all currently running background tasks.
+    
+    Returns:
+        A dictionary of task IDs to their current status
+    """
+    try:
+        return task_manager.get_active_tasks()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting active tasks: {str(e)}")
+
+@router.post("/stop-task/{task_id}", response_model=Dict[str, Any])
+async def stop_task(task_id: str):
+    """
+    Stop a specific background task.
+    
+    Args:
+        task_id: The ID of the task to stop
+        
+    Returns:
+        Confirmation of the task being stopped
+    """
+    try:
+        await task_manager.stop_task(task_id)
+        return {
+            "success": True,
+            "message": f"Task {task_id} stopped successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error stopping task: {str(e)}")
 
 @router.post("/generate-summary/{grant_id}", response_model=dict)
 async def generate_single_grant_summary(

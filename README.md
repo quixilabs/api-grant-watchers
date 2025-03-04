@@ -291,86 +291,95 @@ Each grant summary includes:
 
 #### POST /api/v1/grants/generate-summaries
 
-This endpoint processes grants in batches, generating summaries for each grant and storing them in the database.
+This endpoint starts a background task to generate summaries for all grants in the database.
 
 Query Parameters:
-- `batch_size` (optional, default: 10): Number of grants to process in each batch
-- `offset` (optional, default: 0): Offset for pagination
 - `force_regenerate` (optional, default: false): Whether to regenerate summaries for grants that already have them
 
 Example:
 ```
-POST /api/v1/grants/generate-summaries?batch_size=5
+POST /api/v1/grants/generate-summaries
 ```
 
 Response:
 ```json
 {
   "success": true,
-  "message": "Processed 5 grants",
-  "count": 5,
-  "next_offset": 5,
-  "processed": [
-    {
-      "grant_id": "123456",
-      "status": "success",
-      "summary": {
-        "goal": "Fund research on renewable energy technologies",
-        "duration": "12 months",
-        "success_criteria": [
-          "Clear research methodology",
-          "Demonstrated expertise in renewable energy",
-          "Potential for commercial application"
-        ],
-        "good_to_know": [
-          "Cost sharing of 20% required",
-          "Quarterly progress reports must be submitted",
-          "Prior experience with federal grants preferred"
-        ]
-      }
-    },
-    // Additional processed grants...
-  ]
+  "message": "Background task started successfully",
+  "task_id": "71baa24b-33c4-4f5a-9b6c-31606a55f5c5"
 }
 ```
 
-### Generate Summary for a Single Grant
+#### GET /api/v1/grants/task-status/{task_id}
 
-#### POST /api/v1/grants/generate-summary/{grant_id}
-
-This endpoint generates a summary for a specific grant and stores it in the database.
+Check the status of a background task.
 
 Path Parameters:
-- `grant_id`: The ID of the grant to generate a summary for
-
-Query Parameters:
-- `force_regenerate` (optional, default: false): Whether to regenerate the summary if it already exists
+- `task_id`: The ID of the task to check
 
 Example:
 ```
-POST /api/v1/grants/generate-summary/123456
+GET /api/v1/grants/task-status/71baa24b-33c4-4f5a-9b6c-31606a55f5c5
+```
+
+Response:
+```json
+{
+  "id": "71baa24b-33c4-4f5a-9b6c-31606a55f5c5",
+  "task_type": "grant_summary",
+  "status": "running",
+  "total_items": 100,
+  "processed_items": 45,
+  "failed_items": 2,
+  "current_item_id": "358459",
+  "started_at": "2024-03-20T10:00:00Z",
+  "last_updated_at": "2024-03-20T10:30:00Z"
+}
+```
+
+#### GET /api/v1/grants/active-tasks
+
+Get information about all currently running background tasks.
+
+Example:
+```
+GET /api/v1/grants/active-tasks
+```
+
+Response:
+```json
+{
+  "71baa24b-33c4-4f5a-9b6c-31606a55f5c5": {
+    "id": "71baa24b-33c4-4f5a-9b6c-31606a55f5c5",
+    "task_type": "grant_summary",
+    "status": "running",
+    "total_items": 100,
+    "processed_items": 45,
+    "failed_items": 2,
+    "current_item_id": "358459",
+    "started_at": "2024-03-20T10:00:00Z",
+    "last_updated_at": "2024-03-20T10:30:00Z"
+  }
+}
+```
+
+#### POST /api/v1/grants/stop-task/{task_id}
+
+Stop a specific background task.
+
+Path Parameters:
+- `task_id`: The ID of the task to stop
+
+Example:
+```
+POST /api/v1/grants/stop-task/71baa24b-33c4-4f5a-9b6c-31606a55f5c5
 ```
 
 Response:
 ```json
 {
   "success": true,
-  "message": "Successfully generated summary",
-  "grant_id": "123456",
-  "summary": {
-    "goal": "Fund research on renewable energy technologies",
-    "duration": "12 months",
-    "success_criteria": [
-      "Clear research methodology",
-      "Demonstrated expertise in renewable energy",
-      "Potential for commercial application"
-    ],
-    "good_to_know": [
-      "Cost sharing of 20% required",
-      "Quarterly progress reports must be submitted",
-      "Prior experience with federal grants preferred"
-    ]
-  }
+  "message": "Task 71baa24b-33c4-4f5a-9b6c-31606a55f5c5 stopped successfully"
 }
 ```
 
@@ -382,58 +391,57 @@ API documentation is available at http://localhost:8000/docs when the applicatio
 
 Before running the grant summary generation, make sure you have:
 
-1. Set up your OpenAI API key in the `.env` file:
-   ```
-   OPENAI_API_KEY=your_openai_api_key_here
-   ```
-
-2. Applied the database migration to add the `synopsis_summary` column:
-   ```
-   python apply_migrations.py
-   ```
-
-3. Started the FastAPI application:
-   ```
-   python run.py
+1. Ollama installed and running:
+   ```bash
+   # Install Ollama
+   curl https://ollama.ai/install.sh | sh
+   
+   # Pull the Mistral model
+   ollama pull mistral
+   
+   # Start the Ollama server
+   ollama serve
    ```
 
-### Generate Summaries for All Grants
+2. The background task status table created in your database:
+   ```sql
+   -- Run the migration
+   psql -d your_database -f migrations/add_background_task_status.sql
+   ```
 
-To generate summaries for all grants in the database, you can use the following curl command:
+3. The application running on port 8020:
+   ```bash
+   ./build.sh
+   ```
 
-```bash
-curl -X POST "http://localhost:8000/api/v1/grants/generate-summaries?batch_size=5" -H "accept: application/json"
-```
+To start generating summaries:
 
-This will process grants in batches of 5. You can adjust the batch size as needed.
+1. Start the background task:
+   ```bash
+   curl -X POST "http://localhost:8020/api/v1/grants/generate-summaries"
+   ```
 
-To process the next batch, use the `next_offset` value from the previous response:
+2. Monitor the progress using the returned task_id:
+   ```bash
+   curl "http://localhost:8020/api/v1/grants/task-status/{task_id}"
+   ```
 
-```bash
-curl -X POST "http://localhost:8000/api/v1/grants/generate-summaries?batch_size=5&offset=5" -H "accept: application/json"
-```
+3. View all active tasks:
+   ```bash
+   curl "http://localhost:8020/api/v1/grants/active-tasks"
+   ```
 
-### Generate Summary for a Specific Grant
+4. Stop the task if needed:
+   ```bash
+   curl -X POST "http://localhost:8020/api/v1/grants/stop-task/{task_id}"
+   ```
 
-To generate a summary for a specific grant, use the following curl command:
-
-```bash
-curl -X POST "http://localhost:8000/api/v1/grants/generate-summary/123456" -H "accept: application/json"
-```
-
-Replace `123456` with the actual grant ID you want to generate a summary for.
-
-### Using the FastAPI Swagger UI
-
-You can also use the FastAPI Swagger UI to test these endpoints:
-
-1. Open your browser and navigate to http://localhost:8000/docs
-2. Find the `/api/v1/grants/generate-summaries` or `/api/v1/grants/generate-summary/{grant_id}` endpoint
-3. Click on "Try it out"
-4. Fill in the parameters as needed
-5. Click "Execute"
-
-The response will show the generated summaries and other relevant information.
+The system will:
+- Process one grant every 2 minutes to avoid rate limiting
+- Skip grants that already have summaries (unless force_regenerate is True)
+- Update progress in real-time
+- Handle errors gracefully
+- Allow you to monitor and control the process
 
 ## Scheduled Tasks
 
