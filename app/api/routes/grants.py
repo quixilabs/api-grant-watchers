@@ -4,7 +4,7 @@ from typing import List, Optional
 from app.models.grants import GrantsSearchParams, GrantsResponse
 from app.services.grants_service import fetch_and_save_grants_data
 from app.utils.supabase import get_grants_by_keyword, get_all_grants, update_grant_summary, get_supabase_client
-from app.utils.openai_client import generate_grant_summary
+from app.utils.ollama_client import generate_grant_summary
 
 router = APIRouter()
 

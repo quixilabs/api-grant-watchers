@@ -240,6 +240,44 @@ async def generate_organization_summary_by_id(
             detail=f"Error generating organization summary: {str(e)}"
         )
 
+async def process_organization_grant_matching(organization: dict, grants: list) -> dict:
+    """
+    Process a single organization to match it with relevant grants.
+    
+    Args:
+        organization (dict): Organization data
+        grants (list): List of all available grants
+        
+    Returns:
+        dict: Result of the matching process
+    """
+    try:
+        # Match organization with grants
+        matches = await match_organization_with_grants(organization, grants)
+        
+        if matches:
+            # Save matches
+            save_result = await save_organization_grant_matches(organization["id"], matches)
+            return {
+                "success": save_result.get("success", False),
+                "organization_id": organization.get("id"),
+                "matches_count": len(matches),
+                "result": save_result
+            }
+        else:
+            return {
+                "success": True,
+                "organization_id": organization.get("id"),
+                "matches_count": 0,
+                "message": "No matching grants found"
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "organization_id": organization.get("id"),
+            "error": str(e)
+        }
+
 @router.post("/match-organizations-with-grants")
 async def match_organizations_with_grants(
     batch_size: int = Query(10, description="Number of organizations to process in each batch"),
@@ -303,27 +341,13 @@ async def match_organizations_with_grants(
         errors = []
         
         for org in organizations:
-            try:
-                # Match organization with grants
-                matches = await match_organization_with_grants(org, grants)
-                
-                if matches:
-                    # Save matches
-                    save_result = await save_organization_grant_matches(org["id"], matches)
-                    if save_result.get("success"):
-                        processed += 1
-                    else:
-                        errors.append({
-                            "organization_id": org.get("id"),
-                            "error": save_result.get("error", "Unknown error")
-                        })
-                else:
-                    logger.info(f"No matches found for organization: {org.get('organization_name')}")
-                    
-            except Exception as e:
+            result = await process_organization_grant_matching(org, grants)
+            if result["success"]:
+                processed += 1
+            else:
                 errors.append({
                     "organization_id": org.get("id"),
-                    "error": str(e)
+                    "error": result.get("error", "Unknown error")
                 })
         
         return {
@@ -338,6 +362,84 @@ async def match_organizations_with_grants(
         raise HTTPException(
             status_code=500,
             detail=f"Error matching organizations with grants: {str(e)}"
+        )
+
+@router.post("/match-organization-with-grants/{organization_id}")
+async def match_organization_with_grants_by_id(
+    organization_id: str,
+    force_rematch: bool = Query(False, description="Force rematch even if matches exist")
+):
+    """
+    Match a specific organization with relevant grants.
+    
+    Args:
+        organization_id (str): ID of the organization to process
+        force_rematch (bool): Whether to rematch even if matches exist
+        
+    Returns:
+        dict: Result of the matching process
+    """
+    try:
+        logger.info(f"Generating grant matches for organization: {organization_id}")
+        client = get_supabase_client()
+        
+        # Get the organization
+        query = client.table("organizations").select("*").eq("id", organization_id)
+        result = query.execute()
+        
+        if not result.data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Organization not found with ID: {organization_id}"
+            )
+        
+        organization = result.data[0]
+        
+        # Check if matches exist and force_rematch is False
+        if not force_rematch:
+            matches_result = client.table("organization_grant_matches").select("*").eq("organization_id", organization_id).execute()
+            if matches_result.data:
+                return {
+                    "success": True,
+                    "message": "Organization already has grant matches",
+                    "organization_id": organization_id,
+                    "existing_matches_count": len(matches_result.data)
+                }
+        
+        # Get all grants
+        grants_result = client.table("grants").select("*").execute()
+        grants = grants_result.data
+        
+        if not grants:
+            raise HTTPException(
+                status_code=500,
+                detail="No grants found in the database"
+            )
+        
+        # Process the organization
+        result = await process_organization_grant_matching(organization, grants)
+        
+        if result["success"]:
+            return {
+                "success": True,
+                "message": "Successfully matched organization with grants",
+                "organization_id": organization_id,
+                "matches_count": result.get("matches_count", 0),
+                "result": result.get("result")
+            }
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to match grants: {result.get('error', 'Unknown error')}"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error matching organization with grants: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error matching organization with grants: {str(e)}"
         )
 
 @router.post("/create-grant-match-campaigns")

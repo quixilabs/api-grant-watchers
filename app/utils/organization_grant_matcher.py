@@ -2,14 +2,14 @@ import logging
 import json
 from typing import List, Dict, Any
 from app.utils.supabase import get_supabase_client
-from app.utils.openai_client import get_openai_client
+from app.utils.ollama_client import generate_with_ollama
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
 async def match_organization_with_grants(organization_data: Dict[str, Any], grants: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Match an organization with relevant grants using OpenAI.
+    Match an organization with relevant grants using Ollama.
     
     Args:
         organization_data (dict): The organization data
@@ -19,8 +19,6 @@ async def match_organization_with_grants(organization_data: Dict[str, Any], gran
         list: List of matches with scores and reasons
     """
     try:
-        client = get_openai_client()
-        
         # Prepare organization information
         org_info = f"""
         Organization Information:
@@ -75,20 +73,12 @@ async def match_organization_with_grants(organization_data: Dict[str, Any], gran
         Each match must include the exact grant ID as provided in the input.
         Each match should include a score (0-1) and a detailed reason for the match."""
         
-        # Call OpenAI API
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7,
-            max_tokens=2000
-        )
+        # Call Ollama API
+        response = await generate_with_ollama(prompt, system_message)
         
         # Parse the response
         try:
-            matches = json.loads(response.choices[0].message.content)
+            matches = json.loads(response)
             
             # Validate that all grant_ids exist in the provided grants
             valid_grant_ids = {grant.get('id') for grant in grants}
@@ -103,7 +93,7 @@ async def match_organization_with_grants(organization_data: Dict[str, Any], gran
             return validated_matches
             
         except json.JSONDecodeError:
-            logger.error(f"Error parsing matches JSON: {response.choices[0].message.content}")
+            logger.error(f"Error parsing matches JSON: {response}")
             return []
             
     except Exception as e:
