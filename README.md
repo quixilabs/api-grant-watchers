@@ -119,11 +119,37 @@ CREATE INDEX idx_grants_search_keyword ON grants(search_keyword);
 
 ## Running the Application
 
-```
-python run.py
+You can run the application in two ways:
+
+### Method 1: Using the build script (Recommended)
+```bash
+# Make the build script executable
+chmod +x build.sh
+
+# Run the build script
+./build.sh
 ```
 
-The API will be available at http://localhost:8000
+### Method 2: Manual setup
+1. Create and activate virtual environment:
+   ```
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+2. Install dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
+3. Run database migrations:
+   ```
+   python apply_migrations.py
+   ```
+4. Start the application:
+   ```
+   python run.py
+   ```
+
+The API will be available at http://localhost:8020
 
 ## API Endpoints
 
