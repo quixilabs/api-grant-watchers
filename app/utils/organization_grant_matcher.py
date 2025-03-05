@@ -30,10 +30,25 @@ async def match_organization_with_grants(organization_data: Dict[str, Any], gran
         
         # Prepare grants information with their actual IDs
         grants_info = "\n\nAvailable Grants:\n"
+        logger.debug("Processing grants for matching:")
+        logger.debug(f"Total number of grants: {len(grants)}")
+        
+        # Log first few grants in detail
+        for i, grant in enumerate(grants[:5]):  # Log first 5 grants in detail
+            grant_id = grant.get('id', '')
+            grant_title = grant.get('title', '')
+            logger.debug(f"Grant {i+1}:")
+            logger.debug(f"  ID: {grant_id}")
+            logger.debug(f"  Title: {grant_title}")
+            logger.debug(f"  Agency: {grant.get('agency', '')}")
+            logger.debug("  ---")
+        
         for grant in grants:
+            grant_id = grant.get('id', '')
+            grant_title = grant.get('title', '')
             grants_info += f"""
-            Grant ID: {grant.get('id', '')}
-            Title: {grant.get('title', '')}
+            Grant ID: {grant_id}  # This is a 6-digit numeric code
+            Title: {grant_title}
             Description: {grant.get('description', '')}
             Agency: {grant.get('agency', '')}
             Eligibility: {grant.get('eligibility_categories', [])}
@@ -52,48 +67,80 @@ async def match_organization_with_grants(organization_data: Dict[str, Any], gran
         2. The grant's requirements and eligibility criteria
         3. The organization's type and the grant's target audience
         
-        IMPORTANT: Use the exact Grant ID provided in the grant information.
+        IMPORTANT: You MUST use the exact Grant ID shown in the 'Grant ID:' field above.
+        The Grant ID is a 6-digit numeric code that appears in the format: "358496", "358455", etc.
+        Do NOT make up IDs or use the example format "123456".
+        Do NOT use the grant title or any other identifier.
         
-        Return a JSON array of matches in this format:
+        Return a JSON array of matches in this exact format:
         [
             {{
-                "grant_id": "exact_grant_id_from_above",
-                "match_score": float between 0 and 1,
+                "grant_id": "358496",
+                "match_score": 0.85,
                 "match_reason": "Detailed explanation of why this is a good match"
             }}
         ]
         
         Only include grants that have a match_score >= 0.5
-        Ensure you use the exact grant ID as provided in the grant information.
+        The grant_id must be one of the actual Grant IDs listed above.
+        Return ONLY the JSON array, with no additional text or explanation.
         """
         
         # System message
-        system_message = """You are a grant matching expert. Your task is to analyze organizations and grants to find the best matches.
+        system_message = """You are a JSON-only response bot. Your task is to analyze organizations and grants to find the best matches.
         Return ONLY a JSON array of matches, with no additional text or explanation.
-        Each match must include the exact grant ID as provided in the input.
-        Each match should include a score (0-1) and a detailed reason for the match."""
+        Each match must include an actual Grant ID from the provided list (not made up or example IDs).
+        Each match should include a score (0-1) and a detailed reason for the match.
+        The grant_id must be one of the actual Grant IDs from the input list.
+        Do not include any text before or after the JSON array."""
         
         # Call Ollama API
+        logger.debug("Sending prompt to Ollama")
         response = await generate_with_ollama(prompt, system_message)
+        logger.debug(f"Ollama response: {response}")
+        
+        # Clean the response
+        response = response.strip()
+        
+        # Remove any text before the first '['
+        if '[' in response:
+            response = response[response.index('['):]
+        
+        # Remove any text after the last ']'
+        if ']' in response:
+            response = response[:response.rindex(']') + 1]
         
         # Parse the response
         try:
             matches = json.loads(response)
+            logger.debug(f"Parsed matches: {matches}")
             
             # Validate that all grant_ids exist in the provided grants
             valid_grant_ids = {grant.get('id') for grant in grants}
-            validated_matches = [
-                match for match in matches 
-                if match.get('grant_id') in valid_grant_ids
-            ]
+            logger.debug(f"Valid grant IDs: {valid_grant_ids}")
+            logger.debug(f"Matches before validation: {matches}")
+            
+            # Additional validation to ensure grant_ids are 6-digit numbers
+            validated_matches = []
+            for match in matches:
+                grant_id = match.get('grant_id', '')
+                if grant_id in valid_grant_ids and grant_id.isdigit() and len(grant_id) == 6:
+                    validated_matches.append(match)
+                else:
+                    logger.warning(f"Invalid grant ID format or not found in database: {grant_id}")
+            
+            logger.debug(f"Matches after validation: {validated_matches}")
             
             if len(validated_matches) < len(matches):
                 logger.warning(f"Some matches were filtered out due to invalid grant IDs. Original: {len(matches)}, Valid: {len(validated_matches)}")
+                logger.warning(f"Filtered out matches: {[m for m in matches if m.get('grant_id') not in valid_grant_ids]}")
+                logger.warning(f"Valid grant IDs in database: {valid_grant_ids}")
             
             return validated_matches
             
-        except json.JSONDecodeError:
-            logger.error(f"Error parsing matches JSON: {response}")
+        except json.JSONDecodeError as e:
+            logger.error(f"Error parsing matches JSON: {str(e)}")
+            logger.error(f"Raw response: {response}")
             return []
             
     except Exception as e:

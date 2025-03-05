@@ -1,7 +1,7 @@
 import logging
 import httpx
 import json
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -13,40 +13,130 @@ async def get_ollama_client():
     """
     return httpx.AsyncClient()
 
-async def generate_with_ollama(prompt: str, system_message: str) -> str:
+async def check_ollama_model(model_name: str = "llama2:latest") -> bool:
     """
-    Generate text using Ollama's API.
+    Check if the specified Ollama model is installed.
     
     Args:
-        prompt (str): The user prompt
-        system_message (str): The system message
+        model_name (str): Name of the model to check
+        
+    Returns:
+        bool: True if model is installed, False otherwise
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get("http://localhost:11434/api/tags")
+            response.raise_for_status()
+            result = response.json()
+            
+            # Check if model exists in the list
+            models = [model["name"] for model in result.get("models", [])]
+            if model_name not in models:
+                logger.error(f"Model {model_name} is not installed. Available models: {models}")
+                return False
+            return True
+            
+    except Exception as e:
+        logger.error(f"Error checking Ollama model: {str(e)}")
+        return False
+
+async def check_ollama_server() -> bool:
+    """
+    Check if the Ollama server is running and accessible.
+    
+    Returns:
+        bool: True if server is running and accessible, False otherwise
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get("http://localhost:11434/api/version")
+            return response.status_code == 200
+    except httpx.ConnectError:
+        logger.error("Could not connect to Ollama server. Is it running?")
+        return False
+    except Exception as e:
+        logger.error(f"Error checking Ollama server: {str(e)}")
+        return False
+
+async def generate_with_ollama(prompt: str, system_message: Optional[str] = None) -> str:
+    """
+    Generate text using Ollama's API with the llama2 model.
+    
+    Args:
+        prompt (str): The prompt to send to the model
+        system_message (str, optional): System message to set context
         
     Returns:
         str: The generated response
     """
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                OLLAMA_API_URL,
-                json={
-                    "model": "mistral",  # Using mistral as it's a good balance of performance and quality
-                    "messages": [
-                        {"role": "system", "content": system_message},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "stream": False
-                },
-                timeout=60.0
-            )
+        # First check if Ollama server is running
+        if not await check_ollama_server():
+            raise Exception("Ollama server is not running. Please start it with: ollama serve")
             
-            if response.status_code == 200:
-                return response.json()["message"]["content"]
-            else:
-                logger.error(f"Error from Ollama API: {response.status_code} - {response.text}")
-                raise Exception(f"Ollama API error: {response.status_code}")
+        # Then check if the model is installed
+        if not await check_ollama_model():
+            raise Exception("llama2:latest model is not installed. Please run: ollama pull llama2")
+            
+        url = "http://localhost:11434/api/chat"
+        
+        # Prepare the messages array
+        messages = []
+        if system_message:
+            messages.append({"role": "system", "content": system_message})
+        messages.append({"role": "user", "content": prompt})
+        
+        # Prepare the request data
+        data = {
+            "model": "llama2:latest",  # Using the correct model name with version
+            "messages": messages,
+            "stream": False,
+            "options": {
+                "temperature": 0.7,
+                "top_p": 0.9,
+                "num_predict": 2048,
+                "stop": ["\n\n", "```"]  # Stop on double newline or code block
+            }
+        }
+        
+        logger.debug(f"Sending request to Ollama with data: {json.dumps(data, indent=2)}")
+        
+        # Create a client with increased timeout
+        timeout_settings = httpx.Timeout(
+            connect=5.0,  # 5 seconds to establish connection
+            read=60.0,    # 60 seconds to read response
+            write=5.0,    # 5 seconds to write request
+            pool=5.0      # 5 seconds to get connection from pool
+        )
+        
+        async with httpx.AsyncClient(timeout=timeout_settings) as client:
+            try:
+                response = await client.post(url, json=data)
+                response.raise_for_status()
+                result = response.json()
+                
+                logger.debug(f"Ollama response: {json.dumps(result, indent=2)}")
+                
+                if "message" in result and "content" in result["message"]:
+                    return result["message"]["content"]
+                else:
+                    logger.error(f"Unexpected response format: {result}")
+                    raise Exception(f"Unexpected response format: {result}")
+                    
+            except httpx.TimeoutException as e:
+                logger.error(f"Request timed out: {str(e)}")
+                raise Exception(f"Request timed out after {timeout_settings.read} seconds. The model might be taking too long to respond.")
+            except httpx.ConnectError as e:
+                logger.error(f"Connection error: {str(e)}")
+                raise Exception("Could not connect to Ollama server. Is it running?")
+            except httpx.HTTPError as e:
+                logger.error(f"HTTP error occurred: {str(e)}")
+                logger.error(f"Response content: {e.response.content if hasattr(e, 'response') else 'No response content'}")
+                raise
                 
     except Exception as e:
-        logger.error(f"Error in generate_with_ollama: {str(e)}")
+        logger.error(f"Error generating with Ollama: {str(e)}")
+        logger.error(f"Full error details: {type(e).__name__}: {str(e)}")
         raise
 
 async def generate_grant_summary(grant_data: Dict[str, Any]) -> Dict[str, Any]:

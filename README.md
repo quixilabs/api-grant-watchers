@@ -13,8 +13,9 @@ A FastAPI application that fetches data from the Grants.gov API and stores it in
 - Automated checking for new grants based on saved keywords
 - Statistics on grants found per keyword
 - Detailed grant information fetched from the Grants.gov details API
-- Automatic generation of grant summaries using OpenAI's GPT model
+- Automatic generation of grant summaries using Ollama
 - Webhook support for processing new organization records and generating summaries
+- Organization-grant matching functionality
 
 ## Setup
 
@@ -151,9 +152,135 @@ chmod +x build.sh
 
 The API will be available at http://localhost:8020
 
+## Prerequisites
+
+Before running the application, make sure you have:
+
+1. Ollama installed and running:
+   ```bash
+   # Install Ollama
+   curl https://ollama.ai/install.sh | sh
+   
+   # Pull the Mistral model
+   ollama pull mistral
+   
+   # Start the Ollama server
+   ollama serve
+   ```
+
+2. The background task status table created in your database:
+   ```sql
+   -- Run the migration
+   psql -d your_database -f migrations/add_background_task_status.sql
+   ```
+
 ## API Endpoints
 
-### Search Grants
+### Organization Management
+
+#### POST /api/v1/organizations/generate-summary/{organization_id}
+
+Generate a summary for a specific organization using Ollama.
+
+Path Parameters:
+- `organization_id`: The ID of the organization to process
+
+Query Parameters:
+- `force_regenerate` (optional, default: false): Whether to regenerate the summary even if it exists
+
+Example:
+```
+POST /api/v1/organizations/generate-summary/123e4567-e89b-12d3-a456-426614174000
+```
+
+Response:
+```json
+{
+  "success": true,
+  "message": "Successfully generated organization summary",
+  "organization_id": "123e4567-e89b-12d3-a456-426614174000",
+  "result": {
+    "mission": "Brief statement of the organization's mission",
+    "expertise": ["Area 1", "Area 2", "Area 3"],
+    "funding_interests": ["Interest 1", "Interest 2"],
+    "notable_aspects": ["Notable aspect 1", "Notable aspect 2"]
+  }
+}
+```
+
+#### POST /api/v1/organizations/match-with-grants/{organization_id}
+
+Match a specific organization with relevant grants.
+
+Path Parameters:
+- `organization_id`: The ID of the organization to process
+
+Query Parameters:
+- `force_rematch` (optional, default: false): Whether to rematch even if matches exist
+
+Example:
+```
+POST /api/v1/organizations/match-with-grants/123e4567-e89b-12d3-a456-426614174000
+```
+
+Response:
+```json
+{
+  "success": true,
+  "message": "Successfully matched organization with grants",
+  "organization_id": "123e4567-e89b-12d3-a456-426614174000",
+  "matches_count": 5,
+  "result": {
+    "success": true,
+    "matches": [...]
+  }
+}
+```
+
+#### GET /api/v1/organizations/grant-matches/{organization_id}
+
+Get all grant matches for a specific organization with formatted HTML output.
+
+Path Parameters:
+- `organization_id`: The ID of the organization to get matches for
+
+Example:
+```
+GET /api/v1/organizations/grant-matches/123e4567-e89b-12d3-a456-426614174000
+```
+
+Response:
+```json
+{
+  "organization": {
+    "id": "123e4567-e89b-12d3-a456-426614174000",
+    "name": "Example Organization",
+    "email": "contact@example.org",
+    "description": "Organization description"
+  },
+  "matches": [
+    {
+      "grant": {
+        "id": "grant123",
+        "title": "Example Grant",
+        "agency": "Example Agency",
+        "award_floor": "$10,000",
+        "award_ceiling": "$100,000",
+        "close_date": "2024-12-31",
+        "description": "Grant description",
+        "eligibility": "Eligibility criteria",
+        "grant_link": "https://www.grants.gov/search-grants.html?keywords=grant123"
+      },
+      "match_score": 0.85,
+      "match_reason": "Strong match based on expertise and funding interests"
+    }
+  ],
+  "html_content": "<div>...</div>",
+  "total_matches": 1
+}
+```
+
+### Grant Management
 
 #### GET /api/v1/grants/search
 
@@ -485,7 +612,7 @@ The API supports webhooks for various events:
 When a new organization is added to the Supabase `organizations` table, a webhook is triggered that:
 
 1. Receives the new organization data
-2. Generates a summary of the organization using OpenAI's GPT model
+2. Generates a summary of the organization using Ollama
 3. Updates the organization record with the summary
 
 To set up this webhook in Supabase:
