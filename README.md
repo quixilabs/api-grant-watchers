@@ -509,7 +509,6 @@ Response:
   "message": "Task 71baa24b-33c4-4f5a-9b6c-31606a55f5c5 stopped successfully"
 }
 ```
-
 ## Documentation
 
 API documentation is available at http://localhost:8000/docs when the application is running.
@@ -628,3 +627,4 @@ To set up this webhook in Supabase:
    - Headers: Add a header `x-webhook-signature` with a secret value that matches your `WEBHOOK_SECRET` environment variable
 
 The webhook will automatically process new organizations and generate summaries based on the provided information.
+

@@ -1,7 +1,10 @@
-from fastapi import APIRouter, HTTPException, Query
 import logging
-from app.utils.supabase import get_supabase_client
-from app.utils.organization_utils import process_new_organization
+import json
+from typing import List, Dict, Any
+from fastapi import APIRouter, HTTPException, Query
+
+from app.utils.supabase import get_supabase_client, get_grants_data, get_organization_grant_matches
+from app.utils.organization_utils import update_organization_summary
 from app.utils.organization_grant_matcher import match_organization_with_grants, save_organization_grant_matches
 from app.utils.mailgun_client import send_grant_match_email, generate_email_content
 
@@ -12,28 +15,59 @@ router = APIRouter()
 
 async def process_organization_summary(organization: dict) -> dict:
     """
-    Process a single organization to generate its summary.
+    Process a single organization to generate a summary.
     
     Args:
         organization (dict): Organization data
         
     Returns:
-        dict: Result of the processing
+        dict: Result of the summary generation
     """
     try:
-        # Generate and save summary
-        result = await process_new_organization(organization)
+        # Generate prompt for the summary
+        prompt = f"""
+        Organization Information:
+        Name: {organization.get('organization_name', '')}
+        Type: {organization.get('organization_type', '')}
+        Profile: {organization.get('organization_profile', '')}
+        Grant Interests: {organization.get('grant_interests', '')}
+        
+        Based on the information above, please generate a summary of this organization with the following components:
+        1. Mission: A brief statement of what the organization aims to achieve.
+        2. Expertise: Key areas of knowledge and experience within the organization.
+        3. Funding Interests: What kind of grant opportunities would be most relevant to this organization.
+        4. Notable Aspects: Anything that makes this organization unique or particularly qualified for grants.
+        
+        Format the response as a JSON object with the following structure:
+        {{
+            "mission": "Brief statement of the organization's mission",
+            "expertise": ["Area 1", "Area 2", "Area 3"],
+            "funding_interests": ["Interest 1", "Interest 2"],
+            "notable_aspects": ["Notable aspect 1", "Notable aspect 2"]
+        }}
+        """
+        
+        # Generate summary using DeepSeek AI
+        logger.debug(f"Generating summary for organization: {organization.get('organization_name')}")
+        from app.utils.deepseek_client import generate_with_deepseek
+        response = await generate_with_deepseek(prompt)
+        
+        # Parse the JSON response
+        summary = json.loads(response)
+        
+        # Update the organization with the summary
+        organization_id = organization.get('id')
+        await update_organization_summary(organization_id, summary)
+        
         return {
-            "success": result.get("success", False),
-            "organization_id": organization.get("id"),
-            "result": result
+            "success": True,
+            "message": "Successfully generated organization summary",
+            "organization_id": organization_id,
+            "result": summary
         }
     except Exception as e:
-        return {
-            "success": False,
-            "organization_id": organization.get("id"),
-            "error": str(e)
-        }
+        logger.error(f"Error generating organization summary: {str(e)}")
+        raise
 
 @router.post("/generate-summary/{organization_id}")
 async def generate_organization_summary_by_id(

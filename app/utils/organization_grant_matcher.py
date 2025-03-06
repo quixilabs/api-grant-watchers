@@ -2,14 +2,14 @@ import logging
 import json
 from typing import List, Dict, Any
 from app.utils.supabase import get_supabase_client
-from app.utils.ollama_client import generate_with_ollama
+from app.utils.deepseek_client import generate_with_deepseek
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
 async def match_organization_with_grants(organization_data: Dict[str, Any], grants: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Match an organization with relevant grants using Ollama.
+    Match an organization with relevant grants using DeepSeek AI.
     
     Args:
         organization_data (dict): The organization data
@@ -72,47 +72,37 @@ async def match_organization_with_grants(organization_data: Dict[str, Any], gran
         Do NOT make up IDs or use the example format "123456".
         Do NOT use the grant title or any other identifier.
         
-        Return a JSON array of matches in this exact format:
-        [
-            {{
-                "grant_id": "358496",
-                "match_score": 0.85,
-                "match_reason": "Detailed explanation of why this is a good match"
-            }}
-        ]
+        Return a JSON object with a 'matches' array in this exact format:
+        {{{{
+            "matches": [
+                {{{{
+                    "grant_id": "358496",
+                    "match_score": 0.85,
+                    "match_reason": "Detailed explanation of why this is a good match"
+                }}}}
+            ]
+        }}}}
         
         Only include grants that have a match_score >= 0.5
         The grant_id must be one of the actual Grant IDs listed above.
-        Return ONLY the JSON array, with no additional text or explanation.
         """
         
         # System message
-        system_message = """You are a JSON-only response bot. Your task is to analyze organizations and grants to find the best matches.
-        Return ONLY a JSON array of matches, with no additional text or explanation.
+        system_message = """You are a grant matching expert. Your task is to analyze organizations and grants to find the best matches.
         Each match must include an actual Grant ID from the provided list (not made up or example IDs).
         Each match should include a score (0-1) and a detailed reason for the match.
         The grant_id must be one of the actual Grant IDs from the input list.
-        Do not include any text before or after the JSON array."""
+        Respond with only a valid JSON object containing a 'matches' array."""
         
-        # Call Ollama API
-        logger.debug("Sending prompt to Ollama")
-        response = await generate_with_ollama(prompt, system_message)
-        logger.debug(f"Ollama response: {response}")
-        
-        # Clean the response
-        response = response.strip()
-        
-        # Remove any text before the first '['
-        if '[' in response:
-            response = response[response.index('['):]
-        
-        # Remove any text after the last ']'
-        if ']' in response:
-            response = response[:response.rindex(']') + 1]
+        # Call DeepSeek AI API
+        logger.debug("Sending prompt to DeepSeek AI")
+        response = await generate_with_deepseek(prompt, system_message)
+        logger.debug(f"DeepSeek AI response: {response}")
         
         # Parse the response
         try:
-            matches = json.loads(response)
+            result = json.loads(response)
+            matches = result.get('matches', [])
             logger.debug(f"Parsed matches: {matches}")
             
             # Validate that all grant_ids exist in the provided grants

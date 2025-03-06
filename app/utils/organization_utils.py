@@ -1,7 +1,7 @@
 import logging
 import json
 from app.utils.supabase import get_supabase_client
-from app.utils.ollama_client import generate_with_ollama
+from app.utils.deepseek_client import generate_with_deepseek
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ async def process_new_organization(organization_data):
 
 async def generate_organization_summary(organization_data):
     """
-    Generate a summary of an organization using Ollama.
+    Generate a summary of an organization using DeepSeek AI.
     
     Args:
         organization_data (dict): The organization data to summarize
@@ -56,7 +56,7 @@ async def generate_organization_summary(organization_data):
         linkedin_url = organization_data.get("linkedin_url", "")
         grant_interests = organization_data.get("grant_interests", "")
         
-        # Prepare the prompt for Ollama
+        # Prepare the prompt for DeepSeek AI
         prompt = f"""
         Organization Information:
         Name: {org_name}
@@ -69,25 +69,25 @@ async def generate_organization_summary(organization_data):
         {org_profile}
         
         Generate a summary of this organization in the following JSON format:
-        {{
+        {{{{
             "mission": "Brief statement of the organization's mission",
             "expertise": ["Area 1", "Area 2", "Area 3"],
             "funding_interests": ["Interest 1", "Interest 2"],
             "notable_aspects": ["Notable aspect 1", "Notable aspect 2"]
-        }}
+        }}}}
         
         IMPORTANT: Return ONLY the JSON object, no additional text or explanation.
         """
         
-        # System message for Ollama
+        # System message for DeepSeek AI
         system_message = """You are a JSON-only response bot. Your task is to generate a summary of an organization in a specific JSON format.
         You must return ONLY the JSON object, with no additional text, explanation, or formatting.
         The JSON must be valid and parseable.
         """
         
-        # Call the Ollama API
+        # Call the DeepSeek AI API
         logger.info(f"Generating summary for organization: {org_name}")
-        response = await generate_with_ollama(prompt, system_message)
+        response = await generate_with_deepseek(prompt, system_message)
         
         # Try to parse the JSON response
         try:

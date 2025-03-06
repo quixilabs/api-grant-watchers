@@ -596,4 +596,186 @@ def get_all_grants(limit=100, offset=0):
             "success": False,
             "error": str(e),
             "data": []
-        } 
+        }
+
+async def get_grants_data():
+    """
+    Get all grants data from the Supabase database.
+    
+    Returns:
+        list: List of all grants
+    """
+    try:
+        logger.info("Fetching all grants data from Supabase")
+        client = get_supabase_client()
+        
+        result = client.table("grants").select("*").execute()
+        
+        if not result.data:
+            logger.warning("No grants found in the database")
+            return []
+        
+        logger.info(f"Successfully fetched {len(result.data)} grants")
+        return result.data
+    except Exception as e:
+        logger.error(f"Error fetching grants data: {str(e)}")
+        raise
+
+async def get_organization_grant_matches(organization_id: str):
+    """
+    Get all grant matches for a specific organization.
+    
+    Args:
+        organization_id (str): The ID of the organization
+        
+    Returns:
+        dict: Organization and its grant matches
+    """
+    try:
+        logger.info(f"Fetching grant matches for organization {organization_id}")
+        client = get_supabase_client()
+        
+        # Get the organization
+        org_result = client.table("organizations").select("*").eq("id", organization_id).execute()
+        
+        if not org_result.data:
+            logger.error(f"Organization not found with ID: {organization_id}")
+            return {"error": f"Organization not found with ID: {organization_id}"}
+        
+        organization = org_result.data[0]
+        
+        # Get the grant matches
+        matches_query = client.table("organization_grant_matches").select("*").eq("organization_id", organization_id).execute()
+        
+        matches = []
+        for match in matches_query.data:
+            # Get the grant details
+            grant_id = match.get("grant_id")
+            grant_result = client.table("grants").select("*").eq("id", grant_id).execute()
+            
+            if grant_result.data:
+                grant = grant_result.data[0]
+                
+                # Format the grant information
+                grant_info = {
+                    "id": grant.get("id"),
+                    "title": grant.get("title"),
+                    "agency": grant.get("agency"),
+                    "award_floor": grant.get("award_floor"),
+                    "award_ceiling": grant.get("award_ceiling"),
+                    "close_date": grant.get("close_date"),
+                    "description": grant.get("description"),
+                    "eligibility": grant.get("applicant_eligibility_desc"),
+                    "grant_link": f"https://www.grants.gov/search-grants.html?keywords={grant.get('id')}"
+                }
+                
+                matches.append({
+                    "grant": grant_info,
+                    "match_score": match.get("match_score"),
+                    "match_reason": match.get("match_reason")
+                })
+        
+        result = {
+            "organization": {
+                "id": organization.get("id"),
+                "name": organization.get("organization_name"),
+                "email": organization.get("email"),
+                "description": organization.get("organization_profile")
+            },
+            "matches": matches,
+            "total_matches": len(matches)
+        }
+        
+        # Generate HTML content for the response
+        html_content = generate_matches_html(result)
+        result["html_content"] = html_content
+        
+        logger.info(f"Successfully fetched {len(matches)} grant matches for organization {organization_id}")
+        return result
+    except Exception as e:
+        logger.error(f"Error fetching organization grant matches: {str(e)}")
+        raise
+
+def generate_matches_html(data):
+    """
+    Generate HTML content for grant matches.
+    
+    Args:
+        data (dict): Organization and matches data
+        
+    Returns:
+        str: HTML content
+    """
+    org = data["organization"]
+    matches = data["matches"]
+    
+    html = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px;">
+        <h1 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">
+            Grant Matches for {org.get('name', 'Organization')}
+        </h1>
+        
+        <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+            <h3 style="margin-top: 0; color: #2c3e50;">Organization Information</h3>
+            <p><strong>Name:</strong> {org.get('name', '')}</p>
+            <p><strong>Email:</strong> {org.get('email', '')}</p>
+            <p><strong>Description:</strong> {org.get('description', '')}</p>
+        </div>
+        
+        <h2 style="color: #2c3e50; margin-top: 30px;">
+            {len(matches)} Matching Grants Found
+        </h2>
+    """
+    
+    if not matches:
+        html += """
+        <div style="background-color: #f8d7da; padding: 15px; border-radius: 5px; margin-top: 20px;">
+            <p style="margin: 0; color: #721c24;">No matching grants found for this organization.</p>
+        </div>
+        """
+    else:
+        for i, match in enumerate(matches):
+            grant = match.get("grant", {})
+            score = match.get("match_score", 0)
+            reason = match.get("match_reason", "")
+            
+            # Calculate score color (green for high scores, yellow for medium, red for low)
+            if score >= 0.8:
+                score_color = "#28a745"  # Green
+            elif score >= 0.6:
+                score_color = "#ffc107"  # Yellow
+            else:
+                score_color = "#dc3545"  # Red
+            
+            html += f"""
+            <div style="background-color: #ffffff; padding: 15px; border-radius: 5px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <h3 style="margin: 0; color: #2c3e50;">{i+1}. {grant.get('title', 'Unknown Grant')}</h3>
+                    <span style="background-color: {score_color}; color: white; padding: 5px 10px; border-radius: 20px; font-weight: bold;">
+                        Match: {int(score * 100)}%
+                    </span>
+                </div>
+                
+                <p><strong>Grant ID:</strong> {grant.get('id', '')}</p>
+                <p><strong>Agency:</strong> {grant.get('agency', '')}</p>
+                <p><strong>Deadline:</strong> {grant.get('close_date', '')}</p>
+                <p><strong>Award Range:</strong> ${grant.get('award_floor', '0')} - ${grant.get('award_ceiling', '0')}</p>
+                
+                <div style="background-color: #e9f7fe; padding: 10px; border-radius: 5px; margin: 10px 0;">
+                    <h4 style="margin-top: 0; color: #0078d4;">Why This Grant Matches</h4>
+                    <p>{reason}</p>
+                </div>
+                
+                <p><strong>Description:</strong> {grant.get('description', '')[:300]}...</p>
+                
+                <a href="{grant.get('grant_link', '')}" target="_blank" style="display: inline-block; background-color: #3498db; color: white; padding: 8px 15px; text-decoration: none; border-radius: 5px; margin-top: 10px;">
+                    View Grant Details
+                </a>
+            </div>
+            """
+    
+    html += """
+    </div>
+    """
+    
+    return html 

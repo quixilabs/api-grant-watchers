@@ -40,6 +40,7 @@ else:
 logger.info(f"Loaded SUPABASE_URL: {'[SET]' if os.environ.get('SUPABASE_URL') else '[NOT SET]'}")
 logger.info(f"Loaded SUPABASE_KEY: {'[SET]' if os.environ.get('SUPABASE_KEY') else '[NOT SET]'}")
 logger.info(f"Loaded OPENAI_API_KEY: {'[SET]' if os.environ.get('OPENAI_API_KEY') else '[NOT SET]'}")
+logger.info(f"Loaded DEEPSEEK_API_KEY: {'[SET]' if os.environ.get('DEEPSEEK_API_KEY') else '[NOT SET]'}")
 logger.info(f"SUPABASE_URL value: {os.environ.get('SUPABASE_URL', '')}")
 logger.info(f"SUPABASE_KEY value (first 10 chars): {os.environ.get('SUPABASE_KEY', '')[:10] if os.environ.get('SUPABASE_KEY') else 'None'}")
 
@@ -53,6 +54,9 @@ class Settings(BaseSettings):
     GRANTS_API_URL: str = "https://apply07.grants.gov/grantsws/rest/opportunities/search"
     BEEHIIV_API_KEY: str = os.environ.get("BEEHIIV_API_KEY", "")
     BEEHIIV_PUBLICATION_ID: str = os.environ.get("BEEHIIV_PUBLICATION_ID", "")
+    
+    # DeepSeek API
+    DEEPSEEK_API_KEY: str = os.environ.get("DEEPSEEK_API_KEY", "")
     
     # Project name
     PROJECT_NAME: str = "Grants Webhooks API"
@@ -71,3 +75,4 @@ settings = Settings()
 logger.info(f"Settings initialized with SUPABASE_URL: {settings.SUPABASE_URL}")
 logger.info(f"Settings initialized with SUPABASE_KEY: {'[SET]' if settings.SUPABASE_KEY else '[NOT SET]'}")
 logger.info(f"Settings initialized with OPENAI_API_KEY: {'[SET]' if settings.OPENAI_API_KEY else '[NOT SET]'}")
+logger.info(f"Settings initialized with DEEPSEEK_API_KEY: {'[SET]' if settings.DEEPSEEK_API_KEY else '[NOT SET]'}")
