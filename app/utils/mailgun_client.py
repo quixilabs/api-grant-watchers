@@ -81,7 +81,7 @@ def generate_email_content(organization_data: Dict[str, Any], grant_matches: Lis
             f'<p><strong>Award Range:</strong> ${grant.get("award_floor", "N/A")} - ${grant.get("award_ceiling", "N/A")}</p>',
             f'<p><strong>Close Date:</strong> {grant.get("close_date", "N/A")}</p>',
             '<div style="margin-top: 15px;">',
-            f'<a href="https://www.grants.gov/search-grants.html?keywords={grant.get("id", "")}" style="background-color: #4299e1; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">View Grant Details</a>',
+            f'<a href="https://grants.gov/search-results-detail/{grant.get("id", "")}" style="background-color: #4299e1; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">View Grant Details</a>',
             '</div>',
             '</div>'
         ])

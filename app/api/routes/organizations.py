@@ -182,6 +182,7 @@ async def match_organization_with_grants_by_id(
 ):
     """
     Match a specific organization with relevant grants.
+    Only considers grants that have keywords matching the organization's interests.
     
     Args:
         organization_id (str): ID of the organization to process
@@ -208,6 +209,16 @@ async def match_organization_with_grants_by_id(
         
         logger.debug(f"Processing organization: {organization.get('organization_name')}")
         logger.debug(f"Organization data: {organization}")
+        
+        # Log organization interests for keyword matching
+        org_interests = organization.get('grant_interests', '')
+        if org_interests:
+            if isinstance(org_interests, list):
+                logger.info(f"Organization interests (list): {org_interests}")
+            else:
+                logger.info(f"Organization interests (string): {org_interests}")
+        else:
+            logger.warning("Organization has no grant interests specified. Matching may be less accurate.")
         
         # Check if matches exist and force_rematch is False
         if not force_rematch:
