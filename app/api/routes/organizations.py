@@ -1,12 +1,13 @@
 import logging
 import json
-from typing import List, Dict, Any
-from fastapi import APIRouter, HTTPException, Query
+from typing import List, Dict, Any, Optional
+from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
 
 from app.utils.supabase import get_supabase_client, get_grants_data, get_organization_grant_matches
 from app.utils.organization_utils import update_organization_summary
-from app.utils.organization_grant_matcher import match_organization_with_grants, save_organization_grant_matches
+from app.utils.organization_grant_matcher import match_organization_with_grants, save_organization_grant_matches, background_match_organization_with_grants
 from app.utils.mailgun_client import send_grant_match_email, generate_email_content
+from app.utils.task_manager import create_task, get_task_status, get_organization_tasks, run_background_task
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -178,7 +179,9 @@ async def process_organization_grant_matching(organization: dict, grants: list) 
 @router.post("/match-with-grants/{organization_id}")
 async def match_organization_with_grants_by_id(
     organization_id: str,
-    force_rematch: bool = Query(False, description="Force rematch even if matches exist")
+    background_tasks: BackgroundTasks,
+    force_rematch: bool = Query(False, description="Force rematch even if matches exist"),
+    run_in_background: bool = Query(True, description="Run the matching process in the background")
 ):
     """
     Match a specific organization with relevant grants.
@@ -186,10 +189,12 @@ async def match_organization_with_grants_by_id(
     
     Args:
         organization_id (str): ID of the organization to process
+        background_tasks: FastAPI BackgroundTasks
         force_rematch (bool): Whether to rematch even if matches exist
+        run_in_background (bool): Whether to run the matching process in the background
         
     Returns:
-        dict: Result of the matching process
+        dict: Result of the matching process or task information
     """
     try:
         logger.info(f"Generating grant matches for organization: {organization_id}")
@@ -244,7 +249,30 @@ async def match_organization_with_grants_by_id(
         logger.debug(f"Fetched {len(grants)} grants from database")
         logger.debug(f"Sample grant IDs: {[grant.get('id') for grant in grants[:5]]}")
         
-        # Process the organization
+        # If running in background, create a task and return task ID
+        if run_in_background:
+            # Create a task
+            task_id = create_task("grant_matching", organization_id)
+            
+            # Start the background task
+            background_tasks.add_task(
+                run_background_task,
+                task_id,
+                organization_id,
+                background_match_organization_with_grants,
+                organization,
+                grants
+            )
+            
+            return {
+                "success": True,
+                "message": "Grant matching task started in the background",
+                "organization_id": organization_id,
+                "task_id": task_id,
+                "status_url": f"/api/v1/organizations/task-status/{task_id}"
+            }
+        
+        # If not running in background, process synchronously
         result = await process_organization_grant_matching(organization, grants)
         
         if result["success"]:
@@ -260,7 +288,6 @@ async def match_organization_with_grants_by_id(
                 status_code=500,
                 detail=f"Failed to match grants: {result.get('error', 'Unknown error')}"
             )
-            
     except HTTPException:
         raise
     except Exception as e:
@@ -269,6 +296,46 @@ async def match_organization_with_grants_by_id(
             status_code=500,
             detail=f"Error matching organization with grants: {str(e)}"
         )
+
+@router.get("/task-status/{task_id}")
+async def get_matching_task_status(task_id: str):
+    """
+    Get the status of a grant matching task
+    
+    Args:
+        task_id (str): ID of the task
+        
+    Returns:
+        dict: Task status
+    """
+    status = get_task_status(task_id)
+    if not status:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Task not found with ID: {task_id}"
+        )
+    
+    return status
+
+@router.get("/tasks/{organization_id}")
+async def get_organization_matching_tasks(organization_id: str):
+    """
+    Get all grant matching tasks for an organization
+    
+    Args:
+        organization_id (str): ID of the organization
+        
+    Returns:
+        dict: List of task statuses
+    """
+    tasks = get_organization_tasks(organization_id)
+    
+    return {
+        "success": True,
+        "organization_id": organization_id,
+        "tasks_count": len(tasks),
+        "tasks": tasks
+    }
 
 @router.get("/grant-matches/{organization_id}")
 async def get_organization_grant_matches(organization_id: str):

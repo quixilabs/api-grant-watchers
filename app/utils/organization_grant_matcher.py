@@ -1,14 +1,19 @@
 import logging
 import json
 import asyncio
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from app.utils.supabase import get_supabase_client
 from app.utils.deepseek_client import generate_with_deepseek
+from app.utils.task_manager import update_task_status
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
-async def match_organization_with_grants(organization_data: Dict[str, Any], grants: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+async def match_organization_with_grants(
+    organization_data: Dict[str, Any], 
+    grants: List[Dict[str, Any]],
+    task_id: Optional[str] = None
+) -> List[Dict[str, Any]]:
     """
     Match an organization with relevant grants using DeepSeek AI.
     Only considers grants that have keywords matching the organization's interests.
@@ -17,6 +22,7 @@ async def match_organization_with_grants(organization_data: Dict[str, Any], gran
     Args:
         organization_data (dict): The organization data
         grants (list): List of grants to match against
+        task_id (str, optional): Task ID for background processing
         
     Returns:
         list: List of matches with scores and reasons
@@ -74,6 +80,16 @@ async def match_organization_with_grants(organization_data: Dict[str, Any], gran
         
         logger.info(f"Filtered from {len(grants)} to {len(filtered_grants)} grants based on keywords")
         
+        # Update task status if task_id is provided
+        if task_id:
+            update_task_status(
+                task_id,
+                total_items=len(filtered_grants),
+                processed_items=0,
+                matched_items=0,
+                failed_items=0
+            )
+        
         # Prepare organization information
         org_info = f"""
         Organization Information:
@@ -89,6 +105,15 @@ async def match_organization_with_grants(organization_data: Dict[str, Any], gran
             try:
                 # Log progress
                 logger.info(f"Processing grant {i+1}/{len(filtered_grants)}: {grant.get('id')} - {grant.get('title', '')}")
+                
+                # Update task status if task_id is provided
+                if task_id:
+                    update_task_status(
+                        task_id,
+                        processed_items=i,
+                        current_item_id=grant.get('id'),
+                        current_item_name=grant.get('title', '')
+                    )
                 
                 # Prepare grant information
                 grant_id = grant.get('id', '')
@@ -151,17 +176,52 @@ async def match_organization_with_grants(organization_data: Dict[str, Any], gran
                             if match_score >= 0.5:
                                 logger.info(f"Grant {grant_id} matched with score {match_score}")
                                 all_matches.append(match_data)
+                                
+                                # Update task status if task_id is provided
+                                if task_id:
+                                    update_task_status(
+                                        task_id,
+                                        matched_items=len(all_matches)
+                                    )
                             else:
                                 logger.info(f"Grant {grant_id} score too low: {match_score}")
                         else:
                             logger.warning(f"Grant ID mismatch: expected {grant_id}, got {match_data['grant_id']}")
+                            
+                            # Update task status if task_id is provided
+                            if task_id:
+                                update_task_status(
+                                    task_id,
+                                    failed_items=update_task_status(task_id, failed_items=lambda x: x + 1)
+                                )
                     else:
                         logger.warning(f"Invalid match data format for grant {grant_id}: {match_data}")
+                        
+                        # Update task status if task_id is provided
+                        if task_id:
+                            update_task_status(
+                                task_id,
+                                failed_items=update_task_status(task_id, failed_items=lambda x: x + 1)
+                            )
                 except json.JSONDecodeError as e:
                     logger.error(f"Error parsing match JSON for grant {grant_id}: {str(e)}")
                     logger.error(f"Raw response: {response}")
+                    
+                    # Update task status if task_id is provided
+                    if task_id:
+                        update_task_status(
+                            task_id,
+                            failed_items=update_task_status(task_id, failed_items=lambda x: x + 1)
+                        )
                 except Exception as e:
                     logger.error(f"Error processing match for grant {grant_id}: {str(e)}")
+                    
+                    # Update task status if task_id is provided
+                    if task_id:
+                        update_task_status(
+                            task_id,
+                            failed_items=update_task_status(task_id, failed_items=lambda x: x + 1)
+                        )
                 
                 # Wait 60 seconds before the next API call to avoid rate limiting
                 if i < len(filtered_grants) - 1:  # Don't wait after the last grant
@@ -170,18 +230,89 @@ async def match_organization_with_grants(organization_data: Dict[str, Any], gran
                     
             except Exception as e:
                 logger.error(f"Error processing grant {grant.get('id', 'unknown')}: {str(e)}")
+                
+                # Update task status if task_id is provided
+                if task_id:
+                    update_task_status(
+                        task_id,
+                        failed_items=update_task_status(task_id, failed_items=lambda x: x + 1)
+                    )
+                
                 # Continue with next grant instead of failing the entire batch
                 continue
         
         # Sort matches by score (highest first)
         all_matches.sort(key=lambda x: float(x.get("match_score", 0)), reverse=True)
         
+        # Update task status if task_id is provided
+        if task_id:
+            update_task_status(
+                task_id,
+                processed_items=len(filtered_grants),
+                matched_items=len(all_matches)
+            )
+        
         logger.info(f"Found {len(all_matches)} matching grants with score >= 0.5")
         return all_matches
             
     except Exception as e:
         logger.error(f"Error matching organization with grants: {str(e)}")
+        
+        # Update task status if task_id is provided
+        if task_id:
+            update_task_status(
+                task_id,
+                status="failed",
+                error=str(e)
+            )
+        
         return []
+
+async def background_match_organization_with_grants(
+    task_id: str,
+    organization_data: Dict[str, Any],
+    grants: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """
+    Background task for matching an organization with grants
+    
+    Args:
+        task_id (str): Task ID
+        organization_data (dict): The organization data
+        grants (list): List of grants to match against
+        
+    Returns:
+        dict: Result of the matching process
+    """
+    try:
+        # Match organization with grants
+        matches = await match_organization_with_grants(organization_data, grants, task_id)
+        
+        if matches:
+            # Save matches
+            organization_id = organization_data.get("id")
+            save_result = await save_organization_grant_matches(organization_id, matches)
+            
+            return {
+                "success": save_result.get("success", False),
+                "organization_id": organization_id,
+                "matches_count": len(matches),
+                "result": save_result
+            }
+        else:
+            return {
+                "success": True,
+                "organization_id": organization_data.get("id"),
+                "matches_count": 0,
+                "message": "No matching grants found"
+            }
+    except Exception as e:
+        logger.error(f"Error in background matching task: {str(e)}")
+        return {
+            "success": False,
+            "organization_id": organization_data.get("id"),
+            "error": str(e)
+        }
 
 async def save_organization_grant_matches(organization_id: str, matches: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
