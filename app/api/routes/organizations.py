@@ -141,10 +141,12 @@ async def generate_organization_summary_by_id(
 async def process_organization_grant_matching(organization: dict, grants: list) -> dict:
     """
     Process a single organization to match it with relevant grants.
+    Saves all matches to the database regardless of score, but only includes match_reason for matches with score >= 0.5.
+    Preserves existing matches and only adds new ones.
     
     Args:
         organization (dict): Organization data
-        grants (list): List of all available grants
+        grants (list): List of grants to match against
         
     Returns:
         dict: Result of the matching process
@@ -156,17 +158,31 @@ async def process_organization_grant_matching(organization: dict, grants: list) 
         if matches:
             # Save matches
             save_result = await save_organization_grant_matches(organization["id"], matches)
+            
+            # Count high-quality matches (score >= 0.5) in the new matches
+            high_quality_matches = sum(1 for match in matches if float(match.get("match_score", 0)) >= 0.5)
+            low_quality_matches = len(matches) - high_quality_matches
+            
             return {
                 "success": save_result.get("success", False),
                 "organization_id": organization.get("id"),
-                "matches_count": len(matches),
+                "existing_matches_count": save_result.get("existing_matches_count", 0),
+                "new_matches_count": save_result.get("new_matches_count", 0),
+                "total_matches_count": save_result.get("total_matches_count", 0),
+                "high_quality_matches": high_quality_matches,
+                "total_high_quality_matches": save_result.get("total_high_quality_matches", 0),
+                "low_quality_matches": low_quality_matches,
                 "result": save_result
             }
         else:
             return {
                 "success": True,
                 "organization_id": organization.get("id"),
-                "matches_count": 0,
+                "existing_matches_count": 0,
+                "new_matches_count": 0,
+                "total_matches_count": 0,
+                "high_quality_matches": 0,
+                "low_quality_matches": 0,
                 "message": "No matching grants found"
             }
     except Exception as e:
@@ -186,6 +202,8 @@ async def match_organization_with_grants_by_id(
     """
     Match a specific organization with relevant grants.
     Only considers grants that have keywords matching the organization's interests.
+    Saves all matches to the database regardless of score, but only includes match_reason for matches with score >= 0.5.
+    If matches already exist, only processes grants that haven't been matched yet.
     
     Args:
         organization_id (str): ID of the organization to process
@@ -215,39 +233,101 @@ async def match_organization_with_grants_by_id(
         logger.debug(f"Processing organization: {organization.get('organization_name')}")
         logger.debug(f"Organization data: {organization}")
         
-        # Log organization interests for keyword matching
+        # Extract organization interests/keywords
         org_interests = organization.get('grant_interests', '')
-        if org_interests:
-            if isinstance(org_interests, list):
-                logger.info(f"Organization interests (list): {org_interests}")
-            else:
-                logger.info(f"Organization interests (string): {org_interests}")
+        org_keywords = []
+        
+        if isinstance(org_interests, list):
+            # If it's already a list, use it directly
+            for interest in org_interests:
+                if isinstance(interest, str):
+                    org_keywords.append(interest.strip().lower())
+                else:
+                    # Handle case where list items might not be strings
+                    org_keywords.append(str(interest).strip().lower())
+        elif isinstance(org_interests, str):
+            # If it's a string, split by commas
+            org_keywords = [keyword.strip().lower() for keyword in org_interests.split(',') if keyword.strip()]
+        
+        if org_keywords:
+            logger.info(f"Organization keywords: {org_keywords}")
         else:
             logger.warning("Organization has no grant interests specified. Matching may be less accurate.")
         
-        # Check if matches exist and force_rematch is False
-        if not force_rematch:
-            matches_result = client.table("organization_grant_matches").select("*").eq("organization_id", organization_id).execute()
-            if matches_result.data:
-                return {
-                    "success": True,
-                    "message": "Organization already has grant matches",
-                    "organization_id": organization_id,
-                    "existing_matches_count": len(matches_result.data)
-                }
-        
         # Get all grants
         grants_result = client.table("grants").select("*").execute()
-        grants = grants_result.data
+        all_grants = grants_result.data
         
-        if not grants:
+        if not all_grants:
             raise HTTPException(
                 status_code=500,
                 detail="No grants found in the database"
             )
         
-        logger.debug(f"Fetched {len(grants)} grants from database")
-        logger.debug(f"Sample grant IDs: {[grant.get('id') for grant in grants[:5]]}")
+        logger.debug(f"Fetched {len(all_grants)} grants from database")
+        
+        # Get existing matches for this organization
+        existing_matches = []
+        if not force_rematch:
+            matches_result = client.table("organization_grant_matches").select("*").eq("organization_id", organization_id).execute()
+            existing_matches = matches_result.data
+            
+            # Count high-quality matches (score >= 0.5)
+            high_quality_matches = sum(1 for match in existing_matches if float(match.get("match_score", 0)) >= 0.5)
+            
+            logger.info(f"Found {len(existing_matches)} existing matches, with {high_quality_matches} high-quality matches")
+            
+            # If force_rematch is False and there are existing matches, only process unmatched grants
+            if existing_matches:
+                # Get IDs of grants that have already been matched
+                matched_grant_ids = {match.get("grant_id") for match in existing_matches}
+                logger.info(f"Already matched with {len(matched_grant_ids)} grants")
+        else:
+            # If force_rematch is True, we'll process all grants
+            matched_grant_ids = set()
+            logger.info("Force rematch is enabled, will process all grants")
+        
+        # Pre-filter grants based on keywords if organization has keywords
+        filtered_grants = []
+        if org_keywords:
+            for grant in all_grants:
+                grant_id = grant.get('id')
+                
+                # Skip grants that have already been matched unless force_rematch is True
+                if not force_rematch and grant_id in matched_grant_ids:
+                    logger.debug(f"Skipping grant {grant_id} as it's already matched")
+                    continue
+                
+                # Check if any organization keyword is in the grant title, description, or search_keyword
+                grant_title = str(grant.get('title', '')).lower()
+                grant_desc = str(grant.get('description', '')).lower()
+                grant_keywords = str(grant.get('search_keyword', '')).lower()
+                
+                # Check for keyword matches
+                for keyword in org_keywords:
+                    if (keyword in grant_title or 
+                        keyword in grant_desc or 
+                        keyword in grant_keywords):
+                        filtered_grants.append(grant)
+                        logger.debug(f"Grant {grant_id} matched keyword: {keyword}")
+                        break  # Once we find a match, no need to check other keywords
+            
+            logger.info(f"Pre-filtered grants from {len(all_grants)} to {len(filtered_grants)} based on keywords and existing matches")
+        else:
+            # If no keywords, use all unmatched grants (limited to avoid overwhelming the system)
+            filtered_grants = [grant for grant in all_grants[:100] if force_rematch or grant.get('id') not in matched_grant_ids]
+            logger.info(f"No keywords to filter by, using first 100 unmatched grants")
+        
+        if not filtered_grants:
+            return {
+                "success": True,
+                "message": "No new grants found matching organization keywords",
+                "organization_id": organization_id,
+                "existing_matches_count": len(existing_matches),
+                "new_matches_count": 0,
+                "total_matches_count": len(existing_matches),
+                "high_quality_matches_count": sum(1 for match in existing_matches if float(match.get("match_score", 0)) >= 0.5)
+            }
         
         # If running in background, create a task and return task ID
         if run_in_background:
@@ -261,7 +341,7 @@ async def match_organization_with_grants_by_id(
                 organization_id,
                 background_match_organization_with_grants,
                 organization,
-                grants
+                filtered_grants
             )
             
             return {
@@ -269,19 +349,24 @@ async def match_organization_with_grants_by_id(
                 "message": "Grant matching task started in the background",
                 "organization_id": organization_id,
                 "task_id": task_id,
+                "grants_to_process": len(filtered_grants),
+                "existing_matches_count": len(existing_matches),
                 "status_url": f"/api/v1/organizations/task-status/{task_id}"
             }
         
         # If not running in background, process synchronously
-        result = await process_organization_grant_matching(organization, grants)
+        result = await process_organization_grant_matching(organization, filtered_grants)
         
         if result["success"]:
             return {
                 "success": True,
                 "message": "Successfully matched organization with grants",
                 "organization_id": organization_id,
-                "matches_count": result.get("matches_count", 0),
-                "result": result.get("result")
+                "existing_matches_count": result.get("existing_matches_count", 0),
+                "new_matches_count": result.get("new_matches_count", 0),
+                "total_matches_count": result.get("total_matches_count", 0),
+                "high_quality_matches_count": result.get("total_high_quality_matches", 0),
+                "low_quality_matches_count": result.get("low_quality_matches", 0)
             }
         else:
             raise HTTPException(
@@ -338,53 +423,76 @@ async def get_organization_matching_tasks(organization_id: str):
     }
 
 @router.get("/grant-matches/{organization_id}")
-async def get_organization_grant_matches(organization_id: str):
+async def get_organization_grant_matches(
+    organization_id: str,
+    min_score: float = Query(0.5, description="Minimum match score to include (0.0 to 1.0)")
+):
     """
-    Get all grant matches for a specific organization with formatted HTML output.
+    Get all grant matches for a specific organization.
+    
+    Args:
+        organization_id (str): ID of the organization
+        min_score (float): Minimum match score to include (default: 0.5)
+        
+    Returns:
+        dict: Organization and its grant matches
     """
     try:
-        # Create Supabase client
-        supabase = get_supabase_client()
-        if not supabase:
-            raise HTTPException(status_code=500, detail="Failed to create Supabase client")
-
-        # Get organization details
-        org_response = supabase.table("organizations").select("*").eq("id", organization_id).execute()
-        if not org_response.data:
-            raise HTTPException(status_code=404, detail=f"Organization not found: {organization_id}")
+        logger.info(f"Fetching grant matches for organization {organization_id} with min_score {min_score}")
         
-        organization = org_response.data[0]
+        # Get the organization
+        client = get_supabase_client()
+        org_result = client.table("organizations").select("*").eq("id", organization_id).execute()
         
-        # Get all grant matches for this organization
-        matches_response = supabase.table("organization_grant_matches").select("*").eq("organization_id", organization_id).execute()
-        if not matches_response.data:
+        if not org_result.data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Organization not found with ID: {organization_id}"
+            )
+        
+        organization = org_result.data[0]
+        
+        # Get the grant matches
+        matches_result = client.table("organization_grant_matches").select("*").eq("organization_id", organization_id).gte("match_score", min_score).order("match_score", desc=True).execute()
+        
+        if not matches_result.data:
             return {
-                "organization": organization,
+                "organization": {
+                    "id": organization["id"],
+                    "name": organization.get("organization_name", "N/A"),
+                    "email": organization.get("email", "N/A"),
+                    "description": organization.get("organization_profile", "N/A")
+                },
                 "matches": [],
-                "html_content": "<p>No grant matches found for this organization.</p>"
+                "html_content": "<div><p>No matching grants found for this organization.</p></div>",
+                "total_matches": 0,
+                "min_score": min_score
             }
-                
-        # Get grant details for each match
+        
+        # Process the matches
         grant_matches = []
-        for match in matches_response.data:
-            grant_response = supabase.table("grants").select("*").eq("id", match["grant_id"]).execute()
-            if grant_response.data:
+        for match in matches_result.data:
+            grant_id = match.get("grant_id")
+            grant_result = client.table("grants").select("*").eq("id", grant_id).execute()
+            
+            if grant_result.data:
+                grant = grant_result.data[0]
                 grant_matches.append({
-                    "grant": grant_response.data[0],
-                    "match_score": match["match_score"],
-                    "match_reason": match["match_reason"]
+                    "grant": grant,
+                    "match_score": match.get("match_score"),
+                    "match_reason": match.get("match_reason", "")
                 })
-
+        
         # Generate HTML content
         html_content = generate_email_content(organization, grant_matches)
-
+        
         # Format the response
         response_data = {
             "organization": {
                 "id": organization["id"],
                 "name": organization.get("organization_name", "N/A"),
                 "email": organization.get("email", "N/A"),
-                "description": organization.get("description", "N/A")
+                "description": organization.get("organization_profile", "N/A")
             },
             "matches": [
                 {
@@ -405,7 +513,8 @@ async def get_organization_grant_matches(organization_id: str):
                 for match in grant_matches
             ],
             "html_content": html_content,
-            "total_matches": len(grant_matches)
+            "total_matches": len(grant_matches),
+            "min_score": min_score
         }
 
         return response_data
