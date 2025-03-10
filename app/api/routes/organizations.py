@@ -141,8 +141,8 @@ async def generate_organization_summary_by_id(
 async def process_organization_grant_matching(organization: dict, grants: list) -> dict:
     """
     Process a single organization to match it with relevant grants.
-    Saves all matches to the database regardless of score, but only includes match_reason for matches with score >= 0.5.
-    Preserves existing matches and only adds new ones.
+    Saves all matches to the database immediately as they are generated.
+    Only includes match_reason for matches with score >= 0.5.
     
     Args:
         organization (dict): Organization data
@@ -152,40 +152,52 @@ async def process_organization_grant_matching(organization: dict, grants: list) 
         dict: Result of the matching process
     """
     try:
-        # Match organization with grants
+        # Match organization with grants (matches are saved to the database immediately)
         matches = await match_organization_with_grants(organization, grants)
         
         if matches:
-            # Save matches
-            save_result = await save_organization_grant_matches(organization["id"], matches)
-            
             # Count high-quality matches (score >= 0.5) in the new matches
             high_quality_matches = sum(1 for match in matches if float(match.get("match_score", 0)) >= 0.5)
             low_quality_matches = len(matches) - high_quality_matches
             
-            return {
-                "success": save_result.get("success", False),
-                "organization_id": organization.get("id"),
-                "existing_matches_count": save_result.get("existing_matches_count", 0),
-                "new_matches_count": save_result.get("new_matches_count", 0),
-                "total_matches_count": save_result.get("total_matches_count", 0),
-                "high_quality_matches": high_quality_matches,
-                "total_high_quality_matches": save_result.get("total_high_quality_matches", 0),
-                "low_quality_matches": low_quality_matches,
-                "result": save_result
-            }
-        else:
+            # Get total matches count from the database
+            client = get_supabase_client()
+            total_matches_result = client.table("organization_grant_matches").select("*").eq("organization_id", organization["id"]).execute()
+            total_matches = len(total_matches_result.data)
+            
+            # Count total high-quality matches
+            total_high_quality_matches = sum(1 for match in total_matches_result.data if float(match.get("match_score", 0)) >= 0.5)
+            
             return {
                 "success": True,
                 "organization_id": organization.get("id"),
-                "existing_matches_count": 0,
+                "new_matches_count": len(matches),
+                "total_matches_count": total_matches,
+                "high_quality_matches": high_quality_matches,
+                "total_high_quality_matches": total_high_quality_matches,
+                "low_quality_matches": low_quality_matches
+            }
+        else:
+            # Get total matches count from the database
+            client = get_supabase_client()
+            total_matches_result = client.table("organization_grant_matches").select("*").eq("organization_id", organization["id"]).execute()
+            total_matches = len(total_matches_result.data)
+            
+            # Count total high-quality matches
+            total_high_quality_matches = sum(1 for match in total_matches_result.data if float(match.get("match_score", 0)) >= 0.5)
+            
+            return {
+                "success": True,
+                "organization_id": organization.get("id"),
                 "new_matches_count": 0,
-                "total_matches_count": 0,
+                "total_matches_count": total_matches,
                 "high_quality_matches": 0,
+                "total_high_quality_matches": total_high_quality_matches,
                 "low_quality_matches": 0,
-                "message": "No matching grants found"
+                "message": "No new matching grants found"
             }
     except Exception as e:
+        logger.error(f"Error in organization grant matching: {str(e)}")
         return {
             "success": False,
             "organization_id": organization.get("id"),
@@ -314,9 +326,16 @@ async def match_organization_with_grants_by_id(
             
             logger.info(f"Pre-filtered grants from {len(all_grants)} to {len(filtered_grants)} based on keywords and existing matches")
         else:
-            # If no keywords, use all unmatched grants (limited to avoid overwhelming the system)
-            filtered_grants = [grant for grant in all_grants[:100] if force_rematch or grant.get('id') not in matched_grant_ids]
-            logger.info(f"No keywords to filter by, using first 100 unmatched grants")
+            # If no keywords, don't process any grants
+            logger.warning(f"Organization {organization_id} has no keywords specified. Cannot match without common keywords.")
+            return {
+                "success": False,
+                "message": "Organization has no keywords specified. Cannot match without common keywords.",
+                "organization_id": organization_id,
+                "existing_matches_count": len(existing_matches),
+                "new_matches_count": 0,
+                "total_matches_count": len(existing_matches)
+            }
         
         if not filtered_grants:
             return {

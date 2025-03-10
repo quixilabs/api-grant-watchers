@@ -18,6 +18,7 @@ async def match_organization_with_grants(
     Match an organization with relevant grants using DeepSeek AI.
     Only considers grants that have keywords matching the organization's interests.
     Processes each grant individually with a 60-second delay between LLM calls.
+    Saves each match to the database immediately after it's generated.
     
     Args:
         organization_data (dict): The organization data
@@ -28,6 +29,11 @@ async def match_organization_with_grants(
         list: List of matches with scores and reasons
     """
     try:
+        organization_id = organization_data.get('id')
+        if not organization_id:
+            logger.error("Organization ID is missing")
+            return []
+            
         # Extract organization interests/keywords
         org_interests = organization_data.get('grant_interests', '')
         
@@ -68,17 +74,33 @@ async def match_organization_with_grants(
                 
                 # Check for keyword matches
                 for keyword in org_keywords:
-                    if (keyword in grant_keywords):
+                    if (keyword in grant_title or 
+                        keyword in grant_desc or 
+                        keyword in grant_keywords):
                         filtered_grants.append(grant)
-                        logger.debug(f"Grant {grant.get('id')} matched keyword: {keyword}")
+                        logger.debug(f"Grant {grant.get('id')} matched keyword '{keyword}' in title, description, or keywords")
                         break  # Once we find a match, no need to check other keywords
 
-        # If no grants match the keywords, use a subset of all grants
+        # If no grants match the keywords, return empty list - do not match without common keywords
         if not filtered_grants:
-            logger.warning(f"No grants matched the organization's keywords. Using a subset of all grants.")
-            filtered_grants = grants[:20]  # Limit to 20 grants to avoid too many API calls
+            logger.warning(f"No grants matched the organization's keywords. Skipping matching process.")
+            return []
         
         logger.info(f"Filtered from {len(grants)} to {len(filtered_grants)} grants based on keywords")
+        
+        # Get existing matches for this organization to avoid duplicates
+        client = get_supabase_client()
+        existing_matches_result = client.table("organization_grant_matches").select("grant_id").eq("organization_id", organization_id).execute()
+        existing_grant_ids = {match.get("grant_id") for match in existing_matches_result.data}
+        logger.info(f"Found {len(existing_grant_ids)} existing matches for organization {organization_id}")
+        
+        # Filter out grants that already have matches
+        filtered_grants = [grant for grant in filtered_grants if grant.get('id') not in existing_grant_ids]
+        logger.info(f"After filtering out existing matches, {len(filtered_grants)} grants remain to be processed")
+        
+        if not filtered_grants:
+            logger.info(f"No new grants to process for organization {organization_id}")
+            return []
         
         # Update task status if task_id is provided
         if task_id:
@@ -101,6 +123,9 @@ async def match_organization_with_grants(
         
         # Process each grant individually with staggered LLM calls
         all_matches = []
+        high_quality_matches = 0
+        low_quality_matches = 0
+        
         for i, grant in enumerate(filtered_grants):
             try:
                 # Log progress
@@ -172,18 +197,48 @@ async def match_organization_with_grants(
                         if match_data["grant_id"] == grant_id:
                             match_score = float(match_data["match_score"])
                             
-                            # Add all matches to the results, but only count high-quality matches (score >= 0.5) in the task status
-                            all_matches.append(match_data)
-                            
-                            # Update matched_items count only for high-quality matches
-                            if match_score >= 0.5 and task_id:
-                                high_quality_matches = sum(1 for m in all_matches if float(m.get("match_score", 0)) >= 0.5)
-                                update_task_status(
-                                    task_id,
-                                    matched_items=high_quality_matches
-                                )
+                            # Save this match to the database immediately
+                            try:
+                                # Only include match_reason for high-quality matches (score >= 0.5)
+                                if match_score >= 0.5:
+                                    match_reason = match_data.get("match_reason", "")
+                                    high_quality_matches += 1
+                                else:
+                                    match_reason = ""  # Empty reason for low-quality matches
+                                    low_quality_matches += 1
                                 
-                            logger.info(f"Grant {grant_id} processed with score {match_score}")
+                                match_db_data = {
+                                    "organization_id": organization_id,
+                                    "grant_id": grant_id,
+                                    "match_score": match_score,
+                                    "match_reason": match_reason
+                                }
+                                
+                                # Insert the match into the database
+                                result = client.table("organization_grant_matches").insert(match_db_data).execute()
+                                logger.info(f"Saved match for organization {organization_id} and grant {grant_id} with score {match_score}")
+                                
+                                # Add to all_matches for the return value
+                                all_matches.append(match_data)
+                                
+                                # Update matched_items count only for high-quality matches
+                                if match_score >= 0.5 and task_id:
+                                    update_task_status(
+                                        task_id,
+                                        matched_items=high_quality_matches
+                                    )
+                            except Exception as save_error:
+                                logger.error(f"Error saving match for grant {grant_id}: {str(save_error)}")
+                                
+                                # Still add to all_matches even if saving failed
+                                all_matches.append(match_data)
+                                
+                                # Update task status if task_id is provided
+                                if task_id:
+                                    update_task_status(
+                                        task_id,
+                                        failed_items=update_task_status(task_id, failed_items=lambda x: x + 1)
+                                    )
                         else:
                             logger.warning(f"Grant ID mismatch: expected {grant_id}, got {match_data['grant_id']}")
                             
@@ -243,9 +298,6 @@ async def match_organization_with_grants(
         # Sort matches by score (highest first)
         all_matches.sort(key=lambda x: float(x.get("match_score", 0)), reverse=True)
         
-        # Count high-quality matches (score >= 0.5)
-        high_quality_matches = sum(1 for match in all_matches if float(match.get("match_score", 0)) >= 0.5)
-        
         # Update task status if task_id is provided
         if task_id:
             update_task_status(
@@ -254,7 +306,7 @@ async def match_organization_with_grants(
                 matched_items=high_quality_matches
             )
         
-        logger.info(f"Found {len(all_matches)} total matches, with {high_quality_matches} high-quality matches (score >= 0.5)")
+        logger.info(f"Found and saved {len(all_matches)} total matches, with {high_quality_matches} high-quality matches (score >= 0.5)")
         return all_matches
             
     except Exception as e:
@@ -276,40 +328,80 @@ async def background_match_organization_with_grants(
     grants: List[Dict[str, Any]]
 ) -> Dict[str, Any]:
     """
-    Background task for matching an organization with grants
+    Background task to match an organization with grants.
+    Matches are saved to the database immediately as they are generated.
     
     Args:
-        task_id (str): Task ID
-        organization_data (dict): The organization data
+        task_id (str): Task ID for tracking progress
+        organization_data (dict): Organization data
         grants (list): List of grants to match against
         
     Returns:
         dict: Result of the matching process
     """
     try:
+        # Update task status
+        update_task_status(
+            task_id,
+            status="processing",
+            total_items=len(grants),
+            processed_items=0,
+            matched_items=0,
+            failed_items=0
+        )
+        
         # Match organization with grants
         matches = await match_organization_with_grants(organization_data, grants, task_id)
         
         if matches:
-            # Save matches
+            # Matches have already been saved to the database in match_organization_with_grants
             organization_id = organization_data.get("id")
-            save_result = await save_organization_grant_matches(organization_id, matches)
+            
+            # Count high-quality matches (score >= 0.5)
+            high_quality_matches = sum(1 for match in matches if float(match.get("match_score", 0)) >= 0.5)
+            low_quality_matches = len(matches) - high_quality_matches
+            
+            # Update task status
+            update_task_status(
+                task_id,
+                status="completed",
+                processed_items=len(grants),
+                matched_items=high_quality_matches
+            )
             
             return {
-                "success": save_result.get("success", False),
+                "success": True,
                 "organization_id": organization_id,
                 "matches_count": len(matches),
-                "result": save_result
+                "high_quality_matches": high_quality_matches,
+                "low_quality_matches": low_quality_matches,
+                "message": f"Successfully matched and saved {len(matches)} grants for organization {organization_id}"
             }
         else:
+            # Update task status
+            update_task_status(
+                task_id,
+                status="completed",
+                processed_items=len(grants),
+                matched_items=0
+            )
+            
             return {
                 "success": True,
                 "organization_id": organization_data.get("id"),
                 "matches_count": 0,
-                "message": "No matching grants found"
+                "message": "No matching grants found or all matches already exist"
             }
     except Exception as e:
         logger.error(f"Error in background matching task: {str(e)}")
+        
+        # Update task status
+        update_task_status(
+            task_id,
+            status="failed",
+            error=str(e)
+        )
+        
         return {
             "success": False,
             "organization_id": organization_data.get("id"),
