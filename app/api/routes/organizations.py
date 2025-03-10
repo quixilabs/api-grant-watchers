@@ -412,4 +412,115 @@ async def get_organization_grant_matches(organization_id: str):
 
     except Exception as e:
         logger.error(f"Error in get_organization_grant_matches: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e)) 
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("")
+async def get_all_organizations(
+    limit: int = Query(100, description="Maximum number of organizations to return"),
+    offset: int = Query(0, description="Number of organizations to skip")
+):
+    """
+    Get all organizations from the database.
+    
+    Args:
+        limit (int): Maximum number of organizations to return
+        offset (int): Number of organizations to skip
+        
+    Returns:
+        dict: List of organizations and metadata
+    """
+    try:
+        logger.info(f"Fetching all organizations (limit: {limit}, offset: {offset})")
+        client = get_supabase_client()
+        
+        # Get total count first
+        count_result = client.table("organizations").select("count", count="exact").execute()
+        total_count = count_result.count if hasattr(count_result, 'count') else 0
+        
+        # Get organizations with pagination
+        query = client.table("organizations").select("*").range(offset, offset + limit - 1)
+        result = query.execute()
+        
+        if not result.data:
+            return {
+                "success": True,
+                "message": "No organizations found",
+                "organizations": [],
+                "total_count": 0,
+                "limit": limit,
+                "offset": offset
+            }
+        
+        logger.info(f"Found {len(result.data)} organizations")
+        
+        return {
+            "success": True,
+            "message": f"Successfully retrieved {len(result.data)} organizations",
+            "organizations": result.data,
+            "total_count": total_count,
+            "limit": limit,
+            "offset": offset
+        }
+            
+    except Exception as e:
+        logger.error(f"Error fetching organizations: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching organizations: {str(e)}"
+        )
+
+@router.get("/without-summaries")
+async def get_organizations_without_summaries(
+    limit: int = Query(100, description="Maximum number of organizations to return"),
+    offset: int = Query(0, description="Number of organizations to skip")
+):
+    """
+    Get all organizations that don't have a summary.
+    
+    Args:
+        limit (int): Maximum number of organizations to return
+        offset (int): Number of organizations to skip
+        
+    Returns:
+        dict: List of organizations without summaries and metadata
+    """
+    try:
+        logger.info(f"Fetching organizations without summaries (limit: {limit}, offset: {offset})")
+        client = get_supabase_client()
+        
+        # Get total count of organizations without summaries
+        count_query = client.table("organizations").select("count", count="exact").is_("summary", "null")
+        count_result = count_query.execute()
+        total_count = count_result.count if hasattr(count_result, 'count') else 0
+        
+        # Get organizations without summaries with pagination
+        query = client.table("organizations").select("*").is_("summary", "null").range(offset, offset + limit - 1)
+        result = query.execute()
+        
+        if not result.data:
+            return {
+                "success": True,
+                "message": "No organizations without summaries found",
+                "organizations": [],
+                "total_count": 0,
+                "limit": limit,
+                "offset": offset
+            }
+        
+        logger.info(f"Found {len(result.data)} organizations without summaries")
+        
+        return {
+            "success": True,
+            "message": f"Successfully retrieved {len(result.data)} organizations without summaries",
+            "organizations": result.data,
+            "total_count": total_count,
+            "limit": limit,
+            "offset": offset
+        }
+            
+    except Exception as e:
+        logger.error(f"Error fetching organizations without summaries: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching organizations without summaries: {str(e)}"
+        ) 
