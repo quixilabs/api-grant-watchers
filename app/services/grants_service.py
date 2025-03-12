@@ -150,7 +150,7 @@ async def fetch_and_save_grants_data(keyword="", date_range="30", opp_statuses="
         save_to_supabase (bool): Whether to save the data to Supabase
         
     Returns:
-        dict: The result of the operation
+        dict: The result of the operation, including all grants found regardless of whether they already existed
     """
     try:
         logger.info(f"Fetching and {'saving' if save_to_supabase else 'not saving'} grants data with parameters: keyword={keyword}, date_range={date_range}, opp_statuses={opp_statuses}, rows={rows}, sort_by={sort_by}")
@@ -161,6 +161,15 @@ async def fetch_and_save_grants_data(keyword="", date_range="30", opp_statuses="
         if "error" in data:
             logger.error(f"Error fetching data: {data['error']}")
             return data
+        
+        # Extract opportunities from the data for returning later
+        opportunities = []
+        if isinstance(data, list) and len(data) > 0:
+            response_data = data[0]
+            if "oppHits" in response_data:
+                opportunities = response_data["oppHits"]
+            elif "searchResponse" in response_data and "opportunityList" in response_data["searchResponse"]:
+                opportunities = response_data["searchResponse"]["opportunityList"]
         
         # If save_to_supabase is False, just return the data
         if not save_to_supabase:
@@ -174,7 +183,8 @@ async def fetch_and_save_grants_data(keyword="", date_range="30", opp_statuses="
                 "success": True,
                 "message": "Successfully fetched grants data",
                 "count": count,
-                "data": data
+                "data": data,
+                "opportunities": opportunities
             }
         
         # Save data to Supabase
@@ -189,7 +199,10 @@ async def fetch_and_save_grants_data(keyword="", date_range="30", opp_statuses="
         return {
             "success": True,
             "message": f"Successfully fetched and saved {result.get('count', 0)} grants",
-            "data": result
+            "count": result.get('count', 0),
+            "total_found": result.get('total_found', len(opportunities)),
+            "data": result,
+            "opportunities": opportunities  # Include all opportunities found, regardless of whether they already existed
         }
     except Exception as e:
         logger.error(f"An error occurred in fetch_and_save_grants_data: {str(e)}")

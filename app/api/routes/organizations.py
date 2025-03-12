@@ -542,6 +542,49 @@ async def get_organization_grant_matches(
         logger.error(f"Error in get_organization_grant_matches: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/{organization_id}")
+async def get_organization_by_id(organization_id: str):
+    """
+    Get a specific organization by ID.
+    
+    Args:
+        organization_id (str): ID of the organization to retrieve
+        
+    Returns:
+        dict: Organization data
+    """
+    try:
+        logger.info(f"Fetching organization with ID: {organization_id}")
+        client = get_supabase_client()
+        
+        # Query the organization by ID
+        query = client.table("organizations").select("*").eq("id", organization_id)
+        result = query.execute()
+        
+        if not result.data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Organization not found with ID: {organization_id}"
+            )
+        
+        organization = result.data[0]
+        logger.info(f"Successfully retrieved organization: {organization.get('organization_name')}")
+        
+        return {
+            "success": True,
+            "message": "Successfully retrieved organization",
+            "organization": organization
+        }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching organization: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching organization: {str(e)}"
+        )
+
 @router.get("")
 async def get_all_organizations(
     limit: int = Query(100, description="Maximum number of organizations to return"),

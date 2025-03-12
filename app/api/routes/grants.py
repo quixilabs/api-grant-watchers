@@ -1,11 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional, Dict, Any
+import logging
 
 from app.models.grants import GrantsSearchParams, GrantsResponse
 from app.services.grants_service import fetch_and_save_grants_data
-from app.utils.supabase import get_grants_by_keyword, get_all_grants, update_grant_summary, get_supabase_client
-from app.utils.ollama_client import generate_grant_summary
+from app.utils.supabase import get_grants_by_keyword, get_all_grants, update_grant_summary, get_supabase_client, clean_duplicate_keywords
+from app.utils.deepseek_client import generate_grant_summary
 from app.utils.background_task_manager import task_manager
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -79,7 +83,7 @@ async def generate_grant_summaries(
     force_regenerate: bool = Query(False, description="Whether to regenerate summaries for grants that already have them")
 ):
     """
-    Start a background task to generate summaries for all grants in the database.
+    Start a background task to generate summaries for all grants in the database using DeepSeek AI.
     
     This endpoint will:
     1. Create a background task status record
@@ -161,11 +165,11 @@ async def generate_single_grant_summary(
     force_regenerate: bool = Query(False, description="Whether to regenerate the summary if it already exists")
 ):
     """
-    Generate a summary for a specific grant using GPT.
+    Generate a summary for a specific grant using DeepSeek AI.
     
     This endpoint will:
     1. Retrieve the grant from the database
-    2. Generate a summary using GPT
+    2. Generate a summary using DeepSeek AI
     3. Update the grant record with the summary
     """
     try:
@@ -208,4 +212,37 @@ async def generate_single_grant_summary(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating summary: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Error generating summary: {str(e)}")
+
+@router.post("/clean-duplicate-keywords")
+async def clean_duplicate_keywords_endpoint():
+    """
+    Clean up duplicate keywords in the search_keyword field of all grants.
+    This endpoint removes duplicate keywords (case-insensitive) from all grants.
+    
+    Returns:
+        dict: Summary of the cleanup operation
+    """
+    try:
+        logger.info("Starting cleanup of duplicate keywords in grants table")
+        
+        result = clean_duplicate_keywords()
+        
+        if result.get("success", False):
+            return {
+                "success": True,
+                "message": "Successfully cleaned up duplicate keywords",
+                "grants_processed": result.get("grants_processed", 0),
+                "grants_updated": result.get("grants_updated", 0)
+            }
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to clean up duplicate keywords: {result.get('error', 'Unknown error')}"
+            )
+    except Exception as e:
+        logger.error(f"Error cleaning up duplicate keywords: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error cleaning up duplicate keywords: {str(e)}"
+        ) 
