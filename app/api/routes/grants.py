@@ -110,6 +110,89 @@ async def get_grants_for_keyword(
     
     return result
 
+@router.get("/", response_model=Dict[str, Any])
+async def get_grants(
+    limit: int = Query(100, description="Maximum number of results to return", ge=1, le=1000),
+    offset: int = Query(0, description="Offset for pagination", ge=0)
+):
+    """
+    Retrieve all grants with pagination support.
+    
+    This endpoint returns all grants in the database with pagination.
+    """
+    try:
+        # Get grants from Supabase with pagination
+        result = get_all_grants(limit, offset)
+        
+        if "error" in result:
+            raise HTTPException(status_code=500, detail=result["error"])
+        
+        return result
+    except Exception as e:
+        logger.error(f"Error getting grants: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting grants: {str(e)}")
+
+@router.post("/details/{grant_id}", response_model=Dict[str, Any])
+async def get_or_fetch_grant_details(grant_id: str, force_fetch: bool = False):
+    """
+    Get or fetch details for a specific grant.
+    
+    This endpoint will:
+    1. Check if the grant already has details in the database
+    2. If not, or if force_fetch is True, fetch details from the Grants.gov API
+    3. Update the grant record with the details
+    
+    Args:
+        grant_id: The ID of the grant to get details for
+        force_fetch: Whether to fetch details even if they already exist
+    """
+    try:
+        # Get the grant from the database
+        client = get_supabase_client()
+        result = client.table("grants").select("*").eq("id", grant_id).execute()
+        
+        if not result.data or len(result.data) == 0:
+            raise HTTPException(status_code=404, detail=f"Grant with ID {grant_id} not found")
+        
+        grant = result.data[0]
+        
+        # Check if the grant already has details
+        if not force_fetch and grant.get("details_raw_data"):
+            logger.info(f"Grant {grant_id} already has details, returning from database")
+            return {
+                "success": True,
+                "message": "Grant already has details",
+                "grant_id": grant_id,
+                "details": grant.get("details_raw_data"),
+                "fetched_from": "database"
+            }
+        
+        # Fetch details from Grants.gov API
+        logger.info(f"Fetching details for grant {grant_id} from Grants.gov API")
+        details = await fetch_grant_details(grant_id)
+        
+        if "error" in details:
+            raise HTTPException(status_code=500, detail=details["error"])
+        
+        # Update grant with details
+        update_result = await update_grant_details(grant_id, details)
+        
+        if "error" in update_result:
+            raise HTTPException(status_code=500, detail=update_result["error"])
+        
+        return {
+            "success": True,
+            "message": "Successfully fetched and updated grant details",
+            "grant_id": grant_id,
+            "details": details,
+            "fetched_from": "grants_gov_api"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting or fetching grant details: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting or fetching grant details: {str(e)}")
+
 @router.post("/generate-summaries", response_model=Dict[str, Any])
 async def generate_grant_summaries(
     force_regenerate: bool = Query(False, description="Whether to regenerate summaries for grants that already have them")
@@ -124,12 +207,12 @@ async def generate_grant_summaries(
     
     The process will:
     - Skip grants that already have summaries (unless force_regenerate is True)
-    - Wait 2 minutes between each summary generation
+    - Wait 15 seconds between each summary generation
     - Update progress in real-time
     """
     try:
         # Start the background task
-        task_id = await task_manager.start_grant_summary_task()
+        task_id = await task_manager.start_grant_summary_task(force_regenerate)
         
         return {
             "success": True,

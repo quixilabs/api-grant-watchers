@@ -3,7 +3,7 @@ import logging
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
 from app.utils.supabase import get_supabase_client
-from app.utils.ollama_client import generate_grant_summary
+from app.utils.deepseek_client import generate_grant_summary
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ class BackgroundTaskManager:
             return result.data[0]
         return None
 
-    async def process_grant_summaries(self, task_id: str):
+    async def process_grant_summaries(self, task_id: str, force_regenerate: bool = False):
         """Process grant summaries in the background with rate limiting."""
         try:
             # Get all grants
@@ -56,8 +56,8 @@ class BackgroundTaskManager:
 
             for grant in result.data:
                 try:
-                    # Skip if already has a summary
-                    if grant.get("synopsis_summary"):
+                    # Skip if already has a summary and not force regenerating
+                    if grant.get("synopsis_summary") and not force_regenerate:
                         processed += 1
                         await self.update_task_status(task_id, {
                             "processed_items": processed,
@@ -85,8 +85,8 @@ class BackgroundTaskManager:
                         "current_item_id": grant.get("id")
                     })
 
-                    # Wait for 2 minutes before processing next grant
-                    await asyncio.sleep(120)  # 120 seconds = 2 minutes
+                    # Wait for 15 seconds before processing next grant
+                    await asyncio.sleep(15)  # 15 seconds
 
                 except Exception as e:
                     failed += 1
@@ -112,7 +112,7 @@ class BackgroundTaskManager:
                 "completed_at": datetime.now(timezone.utc).isoformat()
             })
 
-    async def start_grant_summary_task(self) -> str:
+    async def start_grant_summary_task(self, force_regenerate: bool = False) -> str:
         """Start a new background task for generating grant summaries."""
         try:
             # Get total number of grants
@@ -123,7 +123,7 @@ class BackgroundTaskManager:
             task_id = await self.create_task_status("grant_summary", total_grants)
             
             # Start the background task
-            task = asyncio.create_task(self.process_grant_summaries(task_id))
+            task = asyncio.create_task(self.process_grant_summaries(task_id, force_regenerate))
             self.tasks[task_id] = task
             
             return task_id

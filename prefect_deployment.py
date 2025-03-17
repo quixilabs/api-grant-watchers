@@ -42,8 +42,10 @@ if __name__ == "__main__":
         # Get the absolute paths to the workflow files
         main_workflow_path = os.path.abspath("prefect_workflows.py")
         org_workflow_path = os.path.abspath("organization_workflow.py")
+        details_workflow_path = os.path.abspath("grant_details_workflow.py")
         print(f"Main workflow path: {main_workflow_path}")
         print(f"Organization workflow path: {org_workflow_path}")
+        print(f"Grant details workflow path: {details_workflow_path}")
         
         # Get the Prefect server URL (default is http://127.0.0.1:4200)
         server_url = os.getenv("PREFECT_API_URL", "http://127.0.0.1:4200/api")
@@ -94,14 +96,26 @@ if __name__ == "__main__":
             if not run_command(alt_org_cmd, env):
                 sys.exit(1)
         
+        # Create grant details workflow deployment
+        print("\nCreating grant details workflow deployment...")
+        details_cmd = f"prefect deploy {details_workflow_path}:grant_details_summaries_pipeline -n grant-details-summaries --pool default"
+        if not run_command(details_cmd, env):
+            print("Failed to create grant details workflow deployment. Trying alternative syntax...")
+            # Try alternative syntax
+            alt_details_cmd = f"python -m prefect deploy {details_workflow_path}:grant_details_summaries_pipeline -n grant-details-summaries --pool default"
+            if not run_command(alt_details_cmd, env):
+                sys.exit(1)
+        
         print("\nDeployments created successfully!")
         print("- daily-grant-processing: For processing grants from the last day")
         print("- weekly-grant-processing: For processing grants from the last week")
         print("- organization-grant-processing: For processing a specific organization")
+        print("- grant-details-summaries: For processing all grants to ensure they have details and summaries")
         print("\nTo run these deployments manually:")
         print(f"PREFECT_API_URL={server_url} prefect deployment run grant-processing-pipeline/daily-grant-processing")
         print(f"PREFECT_API_URL={server_url} prefect deployment run grant-processing-pipeline/weekly-grant-processing")
         print(f"PREFECT_API_URL={server_url} prefect deployment run organization-grant-processing-pipeline/organization-grant-processing --param organization_name_or_id=\"Organization Name\" --param date_range=30")
+        print(f"PREFECT_API_URL={server_url} prefect deployment run grant-details-summaries/grant-details-summaries --param max_details_grants=100 --param max_summary_grants=20")
         print("\nTo start a worker:")
         print(f"PREFECT_API_URL={server_url} prefect worker start --pool default")
     except Exception as e:

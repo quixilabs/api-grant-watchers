@@ -597,14 +597,15 @@ def get_all_grants(limit=100, offset=0):
         return {
             "success": True,
             "count": len(result.data),
-            "data": result.data
+            "grants": result.data,  # Changed 'data' to 'grants' for workflow compatibility
+            "total": None  # This will be None since we don't know the total count without a separate query
         }
     except Exception as e:
         logger.error(f"Error retrieving grants: {str(e)}")
         return {
             "success": False,
             "error": str(e),
-            "data": []
+            "grants": []  # Changed 'data' to 'grants' for workflow compatibility
         }
 
 async def get_grants_data():
