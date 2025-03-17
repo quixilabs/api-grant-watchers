@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     mailgun_domain: str = Field(alias="MAILGUN_DOMAIN")
     mailgun_from_email: str = Field(alias="MAILGUN_FROM_EMAIL")
     
+    # Add Resend settings
+    resend_api_key: str = Field(alias="RESEND_API_KEY", default="")
+    resend_from_email: str = Field(alias="RESEND_FROM_EMAIL", default="")
+    
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

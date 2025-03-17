@@ -228,7 +228,8 @@ async def find_grants_by_keywords(keywords_data: Dict[str, Any]) -> Dict[str, An
         for keyword in keywords:
             grants_result = await make_api_call(
                 f"grants/search", 
-                params={
+                method="POST",
+                json_data={
                     "keyword": keyword,
                     "date_range": str(date_range),
                     "opp_statuses": "forecasted|posted",

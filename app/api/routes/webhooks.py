@@ -7,7 +7,8 @@ from app.utils.supabase import get_supabase_client
 from app.core.config import settings
 from app.utils.organization_utils import process_new_organization
 from app.utils.organization_grant_matcher import match_organization_with_grants, save_organization_grant_matches
-from app.utils.mailgun_client import send_grant_match_email, generate_email_content
+from app.utils.mailgun_client import send_grant_match_email as mailgun_send_grant_match_email
+from app.utils.resend_client import send_grant_match_email as resend_send_grant_match_email, generate_email_content
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -200,9 +201,9 @@ async def create_grant_match_campaigns(
                         "match_reason": match["match_reason"]
                     })
 
-            # Send email via Mailgun
+            # Send email via Resend (keeping Mailgun code for reference)
             if organization.get("email"):  # Make sure organization has an email
-                result = await send_grant_match_email(
+                result = await resend_send_grant_match_email(
                     organization_data=organization,
                     grant_matches=grant_matches,
                     to_email=organization["email"]

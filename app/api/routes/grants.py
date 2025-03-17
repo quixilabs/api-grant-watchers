@@ -3,8 +3,8 @@ from typing import List, Optional, Dict, Any
 import logging
 
 from app.models.grants import GrantsSearchParams, GrantsResponse
-from app.services.grants_service import fetch_and_save_grants_data
-from app.utils.supabase import get_grants_by_keyword, get_all_grants, update_grant_summary, get_supabase_client, clean_duplicate_keywords
+from app.services.grants_service import fetch_and_save_grants_data, fetch_grant_details
+from app.utils.supabase import get_grants_by_keyword, get_all_grants, update_grant_summary, get_supabase_client, clean_duplicate_keywords, update_grant_details
 from app.utils.deepseek_client import generate_grant_summary
 from app.utils.background_task_manager import task_manager
 
@@ -30,32 +30,64 @@ async def search_grants(params: GrantsSearchParams, save_to_supabase: bool = Tru
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
     
-    return result
-
-@router.get("/search", response_model=GrantsResponse)
-async def search_grants_get(
-    keyword: str = Query("", description="Keyword to search for"),
-    date_range: str = Query("30", description="Date range to search in (e.g., '30' for 30 days)"),
-    opp_statuses: str = Query("forecasted|posted", description="Opportunity statuses to include (e.g., 'forecasted|posted')"),
-    rows: int = Query(5000, description="Number of rows to return"),
-    sort_by: str = Query("openDate|desc", description="Sort order (e.g., 'openDate|desc')"),
-    save_to_supabase: bool = Query(True, description="Whether to save the data to Supabase")
-):
-    """
-    Search for grants using the Grants.gov API and save the results to Supabase.
-    This endpoint supports GET requests with query parameters.
-    """
-    result = await fetch_and_save_grants_data(
-        keyword=keyword,
-        date_range=date_range,
-        opp_statuses=opp_statuses,
-        rows=rows,
-        sort_by=sort_by,
-        save_to_supabase=save_to_supabase
-    )
-    
-    if "error" in result:
-        raise HTTPException(status_code=500, detail=result["error"])
+    # Fetch details for each grant that doesn't have details stored in the database
+    if save_to_supabase and result.get("success", False):
+        client = get_supabase_client()
+        details_fetched = 0
+        
+        # Extract grant IDs from the result
+        saved_grants = []
+        if "data" in result and "results" in result["data"]:
+            # Extract grant IDs from the results
+            for grant_result in result["data"]["results"]:
+                # Handle different result formats
+                if hasattr(grant_result, 'data') and grant_result.data and len(grant_result.data) > 0:
+                    for grant in grant_result.data:
+                        saved_grants.append(grant.get("id"))
+                elif isinstance(grant_result, dict) and "id" in grant_result:
+                    saved_grants.append(grant_result["id"])
+        
+        # If we couldn't extract IDs from results, use the opportunities
+        if not saved_grants and "opportunities" in result:
+            for opportunity in result["opportunities"]:
+                if isinstance(opportunity, dict) and "id" in opportunity:
+                    saved_grants.append(opportunity["id"])
+                elif hasattr(opportunity, "id"):
+                    saved_grants.append(opportunity.id)
+        
+        logger.info(f"Fetching details for {len(saved_grants)} grants")
+        
+        # Fetch details for each grant
+        for grant_id in saved_grants:
+            try:
+                # Check if we already have details for this grant
+                has_details = client.table("grants").select("details_raw_data").eq("id", grant_id).execute()
+                if has_details.data and len(has_details.data) > 0 and has_details.data[0].get("details_raw_data"):
+                    logger.info(f"Grant {grant_id} already has details, skipping")
+                    continue
+                
+                # Fetch details from Grants.gov API
+                details = await fetch_grant_details(grant_id)
+                
+                if "error" in details:
+                    logger.error(f"Error fetching details for grant {grant_id}: {details['error']}")
+                    continue
+                
+                # Update the grant with details
+                update_result = await update_grant_details(grant_id, details)
+                
+                if "error" in update_result:
+                    logger.error(f"Error updating grant {grant_id} with details: {update_result['error']}")
+                else:
+                    details_fetched += 1
+                    logger.info(f"Successfully updated grant {grant_id} with details")
+            except Exception as e:
+                logger.error(f"Error processing details for grant {grant_id}: {str(e)}")
+        
+        logger.info(f"Fetched and saved details for {details_fetched} grants")
+        
+        # Add details fetched count to the result
+        result["details_fetched"] = details_fetched
     
     return result
 

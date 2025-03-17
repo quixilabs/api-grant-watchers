@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
 from app.utils.supabase import get_supabase_client, get_grants_data, get_organization_grant_matches
 from app.utils.organization_utils import update_organization_summary
 from app.utils.organization_grant_matcher import match_organization_with_grants, save_organization_grant_matches, background_match_organization_with_grants
-from app.utils.mailgun_client import send_grant_match_email, generate_email_content
+from app.utils.resend_client import send_grant_match_email as resend_send_grant_match_email, generate_email_content, send_grant_match_email_via_smtp
 from app.utils.task_manager import create_task, get_task_status, get_organization_tasks, run_background_task
 
 # Set up logging
@@ -640,6 +640,107 @@ async def get_all_organizations(
             detail=f"Error fetching organizations: {str(e)}"
         )
 
+@router.post("/send-grant-match-email/{organization_id}")
+async def send_organization_grant_match_email(
+    organization_id: str,
+    min_score: float = Query(0.5, description="Minimum match score to include (0.0 to 1.0)")
+):
+    """
+    Send an email to a specific organization with their matched grants.
+    
+    Args:
+        organization_id (str): ID of the organization to send email to
+        min_score (float): Minimum match score to include (default: 0.5)
+        
+    Returns:
+        dict: Result of the email sending operation
+    """
+    try:
+        logger.info(f"Preparing to send grant match email for organization {organization_id} with min_score {min_score}")
+        
+        # Get the organization
+        client = get_supabase_client()
+        org_result = client.table("organizations").select("*").eq("id", organization_id).execute()
+        
+        if not org_result.data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Organization not found with ID: {organization_id}"
+            )
+        
+        organization = org_result.data[0]
+        
+        # Check if organization has an email address
+        if not organization.get("email"):
+            return {
+                "success": False,
+                "message": f"No email address found for organization: {organization.get('organization_name', 'Unknown')}",
+                "organization_id": organization_id
+            }
+        
+        # Get the grant matches
+        matches_result = client.table("organization_grant_matches").select("*").eq("organization_id", organization_id).gte("match_score", min_score).order("match_score", desc=True).execute()
+        
+        if not matches_result.data:
+            return {
+                "success": False,
+                "message": "No matching grants found for this organization",
+                "organization_id": organization_id
+            }
+        
+        # Process the matches
+        grant_matches = []
+        for match in matches_result.data:
+            grant_id = match.get("grant_id")
+            grant_result = client.table("grants").select("*").eq("id", grant_id).execute()
+            
+            if grant_result.data:
+                grant = grant_result.data[0]
+                grant_matches.append({
+                    "grant": grant,
+                    "match_score": match.get("match_score"),
+                    "match_reason": match.get("match_reason", "")
+                })
+        
+        if not grant_matches:
+            return {
+                "success": False,
+                "message": "No valid grant matches found for this organization",
+                "organization_id": organization_id
+            }
+        
+        # Send the email
+        result = await resend_send_grant_match_email(
+            organization_data=organization,
+            grant_matches=grant_matches,
+            to_email=organization["email"]
+        )
+        
+        if result.get("success"):
+            return {
+                "success": True,
+                "message": f"Successfully sent grant match email to {organization.get('organization_name')}",
+                "organization_id": organization_id,
+                "email": organization.get("email"),
+                "grants_count": len(grant_matches),
+                "message_id": result.get("message_id")
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"Failed to send email: {result.get('error', 'Unknown error')}",
+                "organization_id": organization_id
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error sending grant match email: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error sending grant match email: {str(e)}"
+        )
+
 @router.get("/without-summaries")
 async def get_organizations_without_summaries(
     limit: int = Query(100, description="Maximum number of organizations to return"),
@@ -694,4 +795,109 @@ async def get_organizations_without_summaries(
         raise HTTPException(
             status_code=500,
             detail=f"Error fetching organizations without summaries: {str(e)}"
+        )
+
+@router.post("/send-grant-match-email-smtp/{organization_id}")
+async def send_organization_grant_match_email_smtp(
+    organization_id: str,
+    min_score: float = Query(0.5, description="Minimum match score to include (0.0 to 1.0)")
+):
+    """
+    Send an email to a specific organization with their matched grants using SMTP.
+    This endpoint is useful for testing before domain verification is complete in Resend.
+    
+    Note: During testing, all emails will be sent to charlie@quixilabs.com regardless of 
+    the organization's actual email address. The original recipient will be noted in the subject line.
+    
+    Args:
+        organization_id (str): ID of the organization to send email to
+        min_score (float): Minimum match score to include (default: 0.5)
+        
+    Returns:
+        dict: Result of the email sending operation
+    """
+    try:
+        logger.info(f"Preparing to send grant match email via SMTP for organization {organization_id} with min_score {min_score}")
+        
+        # Get the organization
+        client = get_supabase_client()
+        org_result = client.table("organizations").select("*").eq("id", organization_id).execute()
+        
+        if not org_result.data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Organization not found with ID: {organization_id}"
+            )
+        
+        organization = org_result.data[0]
+        
+        # Check if organization has an email address
+        if not organization.get("email"):
+            return {
+                "success": False,
+                "message": f"No email address found for organization: {organization.get('organization_name', 'Unknown')}",
+                "organization_id": organization_id
+            }
+        
+        # Get the grant matches
+        matches_result = client.table("organization_grant_matches").select("*").eq("organization_id", organization_id).gte("match_score", min_score).order("match_score", desc=True).execute()
+        
+        if not matches_result.data:
+            return {
+                "success": False,
+                "message": "No matching grants found for this organization",
+                "organization_id": organization_id
+            }
+        
+        # Process the matches
+        grant_matches = []
+        for match in matches_result.data:
+            grant_id = match.get("grant_id")
+            grant_result = client.table("grants").select("*").eq("id", grant_id).execute()
+            
+            if grant_result.data:
+                grant = grant_result.data[0]
+                grant_matches.append({
+                    "grant": grant,
+                    "match_score": match.get("match_score"),
+                    "match_reason": match.get("match_reason", "")
+                })
+        
+        if not grant_matches:
+            return {
+                "success": False,
+                "message": "No valid grant matches found for this organization",
+                "organization_id": organization_id
+            }
+        
+        # Send the email using SMTP
+        result = await send_grant_match_email_via_smtp(
+            organization_data=organization,
+            grant_matches=grant_matches,
+            to_email=organization["email"]
+        )
+        
+        if result.get("success"):
+            return {
+                "success": True,
+                "message": f"Successfully sent grant match email via SMTP to charlie@quixilabs.com (original recipient: {organization.get('email')})",
+                "organization_id": organization_id,
+                "email": organization.get("email"),
+                "grants_count": len(grant_matches),
+                "note": "During testing, all emails are sent to charlie@quixilabs.com regardless of the intended recipient"
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"Failed to send email via SMTP: {result.get('error', 'Unknown error')}",
+                "organization_id": organization_id
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error sending grant match email via SMTP: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error sending grant match email via SMTP: {str(e)}"
         ) 
