@@ -1,0 +1,2 @@
+--only-binary pendulum
+pendulum==3.0.0
