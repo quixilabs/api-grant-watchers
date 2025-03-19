@@ -48,7 +48,9 @@ if __name__ == "__main__":
         print(f"Grant details workflow path: {details_workflow_path}")
         
         # Get the Prefect server URL (default is http://127.0.0.1:4200)
-        server_url = os.getenv("PREFECT_API_URL", "http://127.0.0.1:4200/api")
+        server_url = os.getenv("PREFECT_API_URL", "https://api.prefect.cloud/api")
+        # server_url = "https://api.prefect.cloud/api/accounts/quixi-labs/workspaces/default"
+        # # server_url = "https://api.prefect.cloud/api"
         
         print(f"Creating deployments using Prefect 3.0 CLI (connecting to {server_url})...")
         

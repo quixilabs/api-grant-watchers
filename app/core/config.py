@@ -64,11 +64,14 @@ class Settings(BaseSettings):
     # Add Mailgun settings
     mailgun_api_key: str = Field(alias="MAILGUN_API_KEY")
     mailgun_domain: str = Field(alias="MAILGUN_DOMAIN")
-    mailgun_from_email: str = Field(alias="MAILGUN_FROM_EMAIL")
+    mailgun_from_email: str = Field(alias="EMAIL_FROM")
     
     # Add Resend settings
     resend_api_key: str = Field(alias="RESEND_API_KEY", default="")
     resend_from_email: str = Field(alias="RESEND_FROM_EMAIL", default="")
+    
+    # Add Prefect settings
+    PREFECT_API_URL: str = os.environ.get("PREFECT_API_URL", "http://127.0.0.1:4200/api")
     
     class Config:
         env_file = ".env"
@@ -78,5 +81,5 @@ class Settings(BaseSettings):
 settings = Settings()
 logger.info(f"Settings initialized with SUPABASE_URL: {settings.SUPABASE_URL}")
 logger.info(f"Settings initialized with SUPABASE_KEY: {'[SET]' if settings.SUPABASE_KEY else '[NOT SET]'}")
-logger.info(f"Settings initialized with OPENAI_API_KEY: {'[SET]' if settings.OPENAI_API_KEY else '[NOT SET]'}")
+# logger.info(f"Settings initialized with OPENAI_API_KEY: {'[SET]' if settings.OPENAI_API_KEY else '[NOT SET]'}")
 logger.info(f"Settings initialized with DEEPSEEK_API_KEY: {'[SET]' if settings.DEEPSEEK_API_KEY else '[NOT SET]'}")
