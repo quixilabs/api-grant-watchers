@@ -10,4 +10,3 @@ requests
 prefect>=3.0.0
 griffe
 resend==0.6.0
-pendulum==3.0.0 --no-build-isolation
