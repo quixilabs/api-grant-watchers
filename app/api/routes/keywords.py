@@ -2,33 +2,40 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 import logging
+from pydantic import BaseModel
 from app.services.grants_service import fetch_and_save_grants_data, fetch_grant_details
 from app.utils.supabase import get_supabase_client, update_grant_details
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+class CheckNewGrantsRequest(BaseModel):
+    date_range: Optional[str] = "1"  # Default to 1 day
+    opp_statuses: Optional[str] = "forecasted|posted"
+    rows: Optional[int] = 5000
+    sort_by: Optional[str] = "openDate|desc"
+    keywords: Optional[List[str]] = None
+
 @router.post("/check-new-grants", response_model=Dict[str, Any])
 async def check_new_grants_for_keywords(
+    request: CheckNewGrantsRequest,
     background_tasks: BackgroundTasks,
-    date_range: Optional[str] = "1",  # Default to 1 day
-    opp_statuses: Optional[str] = "forecasted|posted",
-    rows: Optional[int] = 5000,
-    sort_by: Optional[str] = "openDate|desc"
 ):
     """
-    Check for new grants for all keywords in the database since yesterday.
+    Check for new grants for specified keywords or all keywords in the database.
     
     This endpoint:
-    1. Retrieves all keywords from the 'keywords' table
-    2. For each keyword, checks for new grants in the last day (or specified date_range)
+    1. Uses provided keywords or retrieves all keywords from the 'keywords' table
+    2. For each keyword, checks for new grants in the specified date range
     3. Saves any new grants to the database
     
     Args:
-        date_range: Number of days to look back for new grants (default: 1)
-        opp_statuses: Opportunity statuses to include (default: "forecasted|posted")
-        rows: Maximum number of results to return per keyword (default: 5000)
-        sort_by: How to sort the results (default: "openDate|desc")
+        request: Request body containing:
+            - date_range: Number of days to look back for new grants (default: 1)
+            - opp_statuses: Opportunity statuses to include (default: "forecasted|posted")
+            - rows: Maximum number of results to return per keyword (default: 5000)
+            - sort_by: How to sort the results (default: "openDate|desc")
+            - keywords: Optional list of keywords to check for
         
     Returns:
         A summary of the operation
@@ -37,16 +44,18 @@ async def check_new_grants_for_keywords(
         # Add the task to the background
         background_tasks.add_task(
             process_keywords_for_new_grants,
-            date_range=date_range,
-            opp_statuses=opp_statuses,
-            rows=rows,
-            sort_by=sort_by
+            date_range=request.date_range,
+            opp_statuses=request.opp_statuses,
+            rows=request.rows,
+            sort_by=request.sort_by,
+            keywords=request.keywords
         )
         
         return {
             "success": True,
-            "message": "Background task started to check for new grants for all keywords",
-            "date_range": date_range
+            "message": "Background task started to check for new grants for keywords",
+            "date_range": request.date_range,
+            "keywords_provided": request.keywords is not None
         }
     except Exception as e:
         logger.error(f"Error starting background task: {str(e)}")
@@ -162,13 +171,14 @@ async def process_keywords_for_new_grants(
     date_range: str,
     opp_statuses: str,
     rows: int,
-    sort_by: str
+    sort_by: str,
+    keywords: List[str],
 ):
     """
-    Process all keywords and check for new grants.
+    Process keywords and check for new grants.
     
     This function runs in the background and:
-    1. Retrieves all keywords from the database
+    1. Uses provided keywords or retrieves all keywords from the database
     2. For each keyword, checks for new grants
     3. Saves any new grants to the database
     4. Fetches detailed information for each new grant
@@ -179,19 +189,24 @@ async def process_keywords_for_new_grants(
         # Get Supabase client
         client = get_supabase_client()
         
-        # Get all keywords from the database
-        response = client.table("keywords").select("*").execute()
-        
-        if not response.data:
-            logger.info("No keywords found in the database")
-            return
-        
-        keywords = response.data
-        logger.info(f"Found {len(keywords)} keywords to process")
+        # If keywords are provided, use them directly
+        if keywords:
+            logger.info(f"Using provided keywords: {keywords}")
+            keywords_to_process = [{"keyword": keyword} for keyword in keywords]
+        else:
+            # Get all keywords from the database
+            response = client.table("keywords").select("*").execute()
+            
+            if not response.data:
+                logger.info("No keywords found in the database")
+                return
+            
+            keywords_to_process = response.data
+            logger.info(f"Found {len(keywords_to_process)} keywords to process")
         
         # Track results
         results = {
-            "total_keywords": len(keywords),
+            "total_keywords": len(keywords_to_process),
             "keywords_processed": 0,
             "total_grants_found": 0,
             "total_grants_saved": 0,
@@ -200,7 +215,7 @@ async def process_keywords_for_new_grants(
         }
         
         # Process each keyword
-        for keyword in keywords:
+        for keyword in keywords_to_process:
             keyword_value = keyword.get("keyword", "")
             if not keyword_value:
                 logger.warning(f"Skipping keyword with empty value: {keyword}")
@@ -290,10 +305,14 @@ async def process_keywords_for_new_grants(
                         logger.info(f"Fetched and saved details for {details_fetched} grants")
                     
                     # Update the keyword's execution_date
-                    client.table("keywords").update({
-                        "execution_date": datetime.now().isoformat(),
-                        "updated_at": datetime.now().isoformat()
-                    }).eq("id", keyword.get("id")).execute()
+                    if keyword.get("id"):
+                        client.table("keywords").update({
+                            "execution_date": datetime.now().isoformat(),
+                            "updated_at": datetime.now().isoformat()
+                        }).eq("id", keyword.get("id")).execute()
+                        logger.info(f"Updated execution date for keyword ID: {keyword.get('id')}")
+                    else:
+                        logger.info("Skipping execution date update for provided keyword without ID")
                     
             except Exception as e:
                 logger.error(f"Error processing keyword '{keyword_value}': {str(e)}")
@@ -303,6 +322,7 @@ async def process_keywords_for_new_grants(
                 })
         
         logger.info(f"Completed processing keywords. Results: {results}")
+        return results
         
         # Save the run results to a new table if needed
         # client.table("keyword_run_results").insert(results).execute()

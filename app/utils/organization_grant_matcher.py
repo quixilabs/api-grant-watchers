@@ -279,8 +279,8 @@ async def match_organization_with_grants(
                 
                 # Wait 60 seconds before the next API call to avoid rate limiting
                 if i < len(filtered_grants) - 1:  # Don't wait after the last grant
-                    logger.info(f"Waiting 20 seconds before processing the next grant...")
-                    await asyncio.sleep(20)
+                    logger.info(f"Waiting 5 seconds before processing the next grant...")
+                    await asyncio.sleep(5)
                     
             except Exception as e:
                 logger.error(f"Error processing grant {grant.get('id', 'unknown')}: {str(e)}")
