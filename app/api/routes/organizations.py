@@ -209,8 +209,7 @@ async def match_organization_with_grants_by_id(
     organization_id: str,
     background_tasks: BackgroundTasks,
     force_rematch: bool = Query(False, description="Force rematch even if matches exist"),
-    run_in_background: bool = Query(True, description="Run the matching process in the background"),
-    useMarketingFlow: bool = Query(False, description="Use the marketing flow to match organizations with grants")
+    run_in_background: bool = Query(True, description="Run the matching process in the background")
 ):
     """
     Match a specific organization with relevant grants.
@@ -232,8 +231,7 @@ async def match_organization_with_grants_by_id(
         client = get_supabase_client()
         
         # Get the organization
-        sourceTable = "organizations" if not useMarketingFlow else "organizations_marketing"
-        query = client.table(sourceTable).select("*").eq("id", organization_id)
+        query = client.table("organizations").select("*").eq("id", organization_id)
         result = query.execute()
         
         if not result.data:

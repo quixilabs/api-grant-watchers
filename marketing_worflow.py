@@ -153,7 +153,7 @@ async def match_organization_with_grants(organization_id: str) -> Dict[str, Any]
         
         # Initial API call to start the matching process
         result = await make_api_call(
-            f"organizations/match-with-grants/{organization_id}?useMarketingFlow=true",
+            f"organizations/match-with-grants/{organization_id}",
             method="POST",
             json_data={
                 "close_date_after": current_date
@@ -217,7 +217,7 @@ async def match_organization_with_grants(organization_id: str) -> Dict[str, Any]
                     }
             
             # Wait before next poll
-            await asyncio.sleep(5)  # Wait 5 seconds between polls
+            await asyncio.sleep(15)  # Wait 5 seconds between polls
         
         # If we get here, we've exceeded max attempts
         logger.error(f"Exceeded maximum polling attempts ({max_attempts})")
@@ -236,7 +236,7 @@ async def match_organization_with_grants(organization_id: str) -> Dict[str, Any]
             "organization_id": organization_id
         }
 
-@flow(name="Process Grants for Marketing organizations")
+@flow(name="Process grant for marketing organization")
 def process_new_grants_flow(
     keywords: List[str],
     organization_id: str,
@@ -297,11 +297,12 @@ def process_new_grants_flow(
 
 if __name__ == "__main__":
     # Example usage
-    test_keywords = ["solar", "space", "energy"]
-    test_organization_id = "46ec484e-1a84-4d3b-a5a6-2538a860f8e4"  # Replace with actual organization ID
+    date_range = 30
+    test_keywords = ["Bio Medical"]
+    test_organization_id = "59169758-4f0f-4325-ab6f-28777e495472"  # Replace with actual organization ID
     process_new_grants_flow(
         keywords=test_keywords,
         organization_id=test_organization_id,
-        date_range=1
+        date_range=date_range
     )
 
