@@ -294,6 +294,9 @@ async def match_organization_with_grants_by_id(
                 # Get IDs of grants that have already been matched
                 matched_grant_ids = {match.get("grant_id") for match in existing_matches}
                 logger.info(f"Already matched with {len(matched_grant_ids)} grants")
+            else:
+                matched_grant_ids = set()
+                logger.info("No existing matches found, will process all grants")
         else:
             # If force_rematch is True, we'll process all grants
             matched_grant_ids = set()
@@ -370,7 +373,7 @@ async def match_organization_with_grants_by_id(
                 "task_id": task_id,
                 "grants_to_process": len(filtered_grants),
                 "existing_matches_count": len(existing_matches),
-                "status_url": f"/api/v1/organizations/task-status/{task_id}"
+                "status_url": f"organizations/task-status/{task_id}"
             }
         
         # If not running in background, process synchronously

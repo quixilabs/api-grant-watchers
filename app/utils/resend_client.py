@@ -183,32 +183,20 @@ def generate_email_content(organization_data: Dict[str, Any], grant_matches: Lis
             score_color = "#DC2626"  # Red for lower matches
             
         # Format award range properly
-        award_floor = grant.get("award_floor", "N/A")
-        award_ceiling = grant.get("award_ceiling", "N/A")
+        award_floor = grant.get("award_floor")
+        award_ceiling = grant.get("award_ceiling")
         
-        if award_floor != "N/A" and award_ceiling != "N/A":
+        # Check for null, None, or blank values
+        if not award_floor or not award_ceiling:
+            award_range = "Not specified"
+        else:
             try:
                 # Convert to float or int first, then format
                 floor_value = float(award_floor)
                 ceiling_value = float(award_ceiling)
                 award_range = f"${floor_value:,.2f} - ${ceiling_value:,.2f}"
             except (ValueError, TypeError):
-                # Fallback if conversion fails
-                award_range = f"${award_floor} - ${award_ceiling}"
-        elif award_floor != "N/A":
-            try:
-                floor_value = float(award_floor)
-                award_range = f"${floor_value:,.2f} minimum"
-            except (ValueError, TypeError):
-                award_range = f"${award_floor} minimum"
-        elif award_ceiling != "N/A":
-            try:
-                ceiling_value = float(award_ceiling)
-                award_range = f"Up to ${ceiling_value:,.2f}"
-            except (ValueError, TypeError):
-                award_range = f"Up to ${award_ceiling}"
-        else:
-            award_range = "Not specified"
+                award_range = "Not specified"
             
         content.extend([
             '<div style="margin: 0 30px 25px; border: 1px solid ' + border_color + '; border-radius: 8px; overflow: hidden;">',
@@ -216,7 +204,7 @@ def generate_email_content(organization_data: Dict[str, Any], grant_matches: Lis
             # Grant header with title and match score
             f'<div style="background-color: {light_bg}; padding: 15px 20px; border-bottom: 1px solid {border_color}; display: flex; justify-content: space-between; align-items: center;">',
             f'<h2 style="color: {secondary_color}; margin: 0; font-size: 18px; flex: 1;">{grant.get("title", "N/A")}</h2>',
-            f'<div style="background-color: {score_color}; color: white; font-weight: bold; padding: 5px 10px; border-radius: 20px; font-size: 14px; min-width: 50px; text-align: center;">{match_score:.0f}%</div>',
+            f'<div style="background-color: {score_color}; color: white; font-weight: bold; padding: 5px 10px; border-radius: 20px; font-size: 14px; min-width: 50px; text-align: center; margin-left: auto; height: fit-content;">{match_score:.0f}%</div>',
             '</div>',
             
             # Grant details
@@ -232,7 +220,7 @@ def generate_email_content(organization_data: Dict[str, Any], grant_matches: Lis
             '</tr>',
             '<tr>',
             f'<td style="padding: 8px 0; vertical-align: top;"><strong style="color: {text_color};">Close Date:</strong></td>',
-            f'<td style="padding: 8px 0;">{grant.get("close_date", "N/A")}</td>',
+            f'<td style="padding: 8px 0;">{grant.get("close_date") or "Not specified"}</td>',
             '</tr>',
             '</table>',
             
@@ -249,6 +237,16 @@ def generate_email_content(organization_data: Dict[str, Any], grant_matches: Lis
             '</div>',
             '</div>'
         ])
+
+        # Add signup CTA after every two grants
+        if (i + 1) % 2 == 0 and i < len(grant_matches) - 1:
+            content.extend([
+                '<div style="margin: 30px; padding: 25px; background-color: ' + light_bg + '; border-radius: 8px; text-align: center; border: 1px solid ' + border_color + ';">',
+                f'<h3 style="color: {secondary_color}; margin-top: 0; font-size: 20px;">Want More Grant Opportunities?</h3>',
+                '<p style="color: #555; margin-bottom: 20px;">Sign up for our premium service to get access to more grant opportunities and personalized matching.</p>',
+                f'<a href="https://grantwatcher.com/upgrade?organizationId={organization_data.get("id")}" style="display: inline-block; background-color: {success_color}; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; transition: background-color 0.2s;">Upgrade to Premium</a>',
+                '</div>'
+            ])
 
     # Footer section
     content.extend([
